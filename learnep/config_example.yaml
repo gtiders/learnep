@@ -205,17 +205,17 @@ gpumd:
 # 结构选择配置
 # =============================================================================
 selection:
-  # 选择方法: "maxvol" 或 "fps"
-  # - maxvol: 使用 MaxVol 算法选择能最大化描述符空间的结构
-  #           选择数量由 max_structures_per_iteration 控制
-  # - fps: 使用最远点采样选择多样性最大的结构
-  #        自动调整距离直到选够指定数量
+  # 选择方法: "maxvol" 或 "maxvol_fps"
+  # - maxvol: MaxVol 直接选择最有价值的结构，数量由 max_structures_per_iteration 控制
+  #           使用贪婪算法选择能最大化描述符空间的结构
+  # - maxvol_fps: 先 MaxVol 选择所有代表性结构，再用 FPS 二次筛选到指定数量
+  #               适合候选结构非常多的情况
   method: "maxvol"
   
   # MaxVol 算法参数
   gamma_tol: 1.001           # 收敛阈值（算法何时停止迭代）
   batch_size: 10000          # 批处理大小（大数据集分批处理）
   
-  # FPS (最远点采样) 参数（仅 method="fps" 时使用）
+  # FPS (最远点采样) 参数（仅 method="maxvol_fps" 时使用）
   fps_min_distance: 0.01     # 初始最小距离阈值
 

@@ -21,8 +21,6 @@ from ase import Atoms
 from .config import Config
 from .maxvol import (
     select_active_set,
-    select_candidates_maxvol,
-    select_candidates_fps,
     read_trajectory,
     write_trajectory,
     write_asi_file,
@@ -372,31 +370,48 @@ class IterationManager:
         max_structures = self.config.global_config.max_structures_per_iteration
         method = self.config.selection.method.lower()
 
-        if method == "fps":
-            # FPS 模式：直接使用最远点采样
-            self.logger.info(f"\n使用 FPS 选择（目标: {max_structures} 个结构）...")
+        if method == "maxvol_fps":
+            # MaxVol + FPS 模式：先 MaxVol 选择代表性结构，再用 FPS 二次筛选
+            self.logger.info("\n使用 MaxVol + FPS 模式...")
 
-            selected = select_candidates_fps(
-                candidate_trajectory=candidate_structures,
-                nep_file=str(nep_file),
-                max_count=max_structures,
-                initial_min_distance=self.config.selection.fps_min_distance,
-                show_progress=False,
-            )
-            self.logger.info(f"FPS 选中 {len(selected)} 个结构")
+            from .maxvol import select_extension_structures, apply_fps_filter
 
-        else:
-            # MaxVol 模式（默认）
-            self.logger.info(f"\n使用 MaxVol 选择（目标: {max_structures} 个结构）...")
-
-            selected = select_candidates_maxvol(
+            # 第一步：MaxVol 选择
+            self.logger.info("第一步: MaxVol 选择代表性结构...")
+            selected = select_extension_structures(
                 train_trajectory=train_structures,
                 candidate_trajectory=candidate_structures,
                 nep_file=str(nep_file),
-                max_count=max_structures,
                 gamma_tol=self.config.selection.gamma_tol,
                 batch_size=self.config.selection.batch_size,
-                show_progress=False,
+            )
+            self.logger.info(f"MaxVol 选中 {len(selected)} 个结构")
+
+            # 第二步：FPS 筛选（如果超过限制）
+            if len(selected) > max_structures:
+                self.logger.info(f"第二步: FPS 筛选到 {max_structures} 个结构...")
+                selected = apply_fps_filter(
+                    structures=selected,
+                    nep_file=str(nep_file),
+                    max_count=max_structures,
+                    initial_min_distance=self.config.selection.fps_min_distance,
+                    show_progress=False,
+                )
+                self.logger.info(f"FPS 筛选后: {len(selected)} 个结构")
+
+        else:
+            # MaxVol 模式（默认）：直接选择最有价值的结构
+            self.logger.info(f"\n使用 MaxVol 模式（目标: {max_structures} 个结构）...")
+
+            from .maxvol import select_structures_maxvol
+
+            selected = select_structures_maxvol(
+                train_structures=train_structures,
+                candidate_structures=candidate_structures,
+                nep_file=str(nep_file),
+                max_structures=max_structures,
+                gamma_tol=self.config.selection.gamma_tol,
+                batch_size=self.config.selection.batch_size,
             )
             self.logger.info(f"MaxVol 选中 {len(selected)} 个结构")
 
