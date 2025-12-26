@@ -1,7 +1,7 @@
 [project]
-name = "nep-maker"
-version = "0.1.0"
-description = "Add your description here"
+name = "nep-auto"
+version = "0.2.0"
+description = "基于 MaxVol 算法的 NEP 势函数主动学习框架"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -18,6 +18,7 @@ nep-auto-init = "nep_auto.initialize:main"
 nep-auto-main = "nep_auto.main:main"
 nep-auto-config = "nep_auto.config:main"
 nep-auto-first-train = "nep_auto.first_train:main"
+nep-auto-init-config = "nep_auto.init_config:main"
 
 [tool.uv]
 package = true
@@ -34,5 +35,9 @@ build-backend = "setuptools.build_meta"
 include = ["nep_auto*"]
 exclude = ["test*", "nep_maker*"]
 
+[tool.setuptools.package-data]
+nep_auto = ["*.yaml"]
+
 [tool.uv.sources]
 pynep = { git = "https://github.com/bigd4/PyNEP.git" }
+

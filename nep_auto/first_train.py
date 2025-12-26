@@ -82,7 +82,7 @@ def first_train(config: Config, logger: logging.Logger) -> None:
     nep_in_file = train_dir / "nep.in"
     with open(nep_in_file, "w") as f:
         f.write(config.nep.first_input_content)
-    logger.info(f"  创建 nep.in (使用 first_input_content)")
+    logger.info("  创建 nep.in (使用 first_input_content)")
 
     # 写入作业脚本
     from .iteration import _ensure_done_marker
@@ -90,7 +90,7 @@ def first_train(config: Config, logger: logging.Logger) -> None:
     job_script_file = train_dir / "job.sh"
     with open(job_script_file, "w") as f:
         f.write(_ensure_done_marker(config.nep.job_script))
-    logger.info(f"  创建作业脚本（已自动添加 DONE 标记）")
+    logger.info("  创建作业脚本（已自动添加 DONE 标记）")
 
     logger.info("")
     logger.info("=" * 80)
@@ -98,8 +98,8 @@ def first_train(config: Config, logger: logging.Logger) -> None:
     logger.info("=" * 80)
     logger.info("")
     logger.info("下一步：提交训练任务")
-    logger.info(f"  1. cd {train_dir}")
-    logger.info(f"  2. 提交作业: qsub job.sh (或其他调度命令)")
+    logger.info("  1. cd {train_dir}")
+    logger.info("  2. 提交作业: qsub job.sh (或其他调度命令)")
     logger.info("")
     logger.info("训练完成后：")
     logger.info(f"  - nep.txt 将生成在 {train_dir}/nep.txt")

@@ -623,7 +623,7 @@ class IterationManager:
                         # 训练集为空
                         shutil.copy2(train_file, train_xyz_dst)
 
-            except Exception as e:
+            except Exception as e:  # noqa: F841
                 self.logger.warning("  训练集修剪失败: {e}")
                 self.logger.warning("  回退到直接复制模式")
                 shutil.copy2(train_file, train_xyz_dst)

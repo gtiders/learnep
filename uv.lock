@@ -268,8 +268,8 @@ wheels = [
 ]
 
 [[package]]
-name = "nep-maker"
-version = "0.1.0"
+name = "nep-auto"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "ase" },
