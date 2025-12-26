@@ -290,9 +290,9 @@ def main():
     import sys
 
     if len(sys.argv) < 2:
-        print("用法: nep-auto-init <config_file.yaml>")
+        print("用法: learnep-init <config_file.yaml>")
         print("\n示例:")
-        print("  nep-auto-init config.yaml")
+        print("  learnep-init config.yaml")
         sys.exit(1)
 
     config_file = sys.argv[1]

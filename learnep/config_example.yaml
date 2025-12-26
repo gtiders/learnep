@@ -1,5 +1,5 @@
 # =============================================================================
-# NEP 主动学习配置文件
+# LearnEP 主动学习配置文件
 # =============================================================================
 # 说明：
 # - 相对路径以 work_dir 为基准解析，绝对路径则直接使用
@@ -25,12 +25,12 @@ global:
   log_file: "active_learning.log"
   
   # 初始 NEP 模型文件（相对于 work_dir）
-  # 如果没有，可使用 nep-auto-first-train 命令从头训练生成
+  # 如果没有，可使用 learnep-first-train 命令从头训练生成
   initial_nep_model: "nep.txt"
   
   # 初始 NEP restart 文件（相对于 work_dir）
   # 用于继续训练，每次训练都会从上一轮的 nep.restart 开始
-  # 如果没有，可使用 nep-auto-first-train 命令从头训练生成
+  # 如果没有，可使用 learnep-first-train 命令从头训练生成
   initial_nep_restart: "nep.restart"
   
   # 初始训练数据（必须提供，相对于 work_dir）
@@ -99,7 +99,7 @@ nep:
     lambda_v   0.1
   
   # nep.in 内容（用于从头训练第一个 NEP 模型）
-  # 使用 nep-auto-first-train 命令时会用到
+  # 使用 learnep-first-train 命令时会用到
   # 注意：这里通常需要更多的 generation 来从随机初始化开始训练
   first_input_content: |
     type       2 Si O

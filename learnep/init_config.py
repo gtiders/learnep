@@ -16,14 +16,14 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="NEP Auto 配置文件初始化工具",
+        description="LearnEP 配置文件初始化工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""示例:
   # 在当前目录生成 config.yaml
-  nep-auto-init-config
+  learnep-init-config
 
   # 指定输出文件名
-  nep-auto-init-config -o my_config.yaml
+  learnep-init-config -o my_config.yaml
         """,
     )
     parser.add_argument(
@@ -73,7 +73,7 @@ def main() -> None:
         print("  - nep.prune_train_set: 是否启用训练集修剪")
         print("  - nep.max_structures_factor: 训练集最大规模系数")
         print("\n配置完成后运行:")
-        print(f"  nep-auto-main {output_file}")
+        print(f"  learnep {output_file}")
     except Exception as e:
         print(f"错误: 复制配置文件失败: {e}")
         sys.exit(1)

@@ -1,4 +1,4 @@
-# NEP Auto - NEP 主动学习自动化框架
+# LearnEP - NEP 主动学习框架
 
 基于 MaxVol 算法的 NEP 势函数主动学习框架，提供自动化的结构选择和 DFT 标注流程。
 
@@ -50,7 +50,7 @@ pip install -e .
 
 ```bash
 # 在当前目录生成配置模板
-nep-auto-init-config
+learnep-init-config
 
 # 这会生成 config.yaml 文件，包含所有必需的配置选项
 ```
@@ -68,7 +68,7 @@ nep-auto-init-config
 
 ```bash
 # 从训练数据生成初始 nep.txt 和 nep.restart
-nep-auto-first-train config.yaml
+learnep-first-train config.yaml
 
 # 这会在工作目录生成 nep.txt 和 nep.restart 文件
 ```
@@ -85,7 +85,7 @@ vim config.yaml
 **最简单的方式**（推荐）：
 
 ```bash
-uv run nep-auto-main my_config.yaml
+uv run learnep my_config.yaml
 ```
 
 这会自动：
@@ -97,17 +97,17 @@ uv run nep-auto-main my_config.yaml
 
 ```bash
 # 步骤 1: 仅初始化（可选）
-uv run nep-auto-init my_config.yaml
+uv run learnep-init my_config.yaml
 
 # 步骤 2: 运行迭代
-uv run nep-auto-main my_config.yaml
+uv run learnep my_config.yaml
 ```
 
 **中断后恢复**：
 
 ```bash
 # 从特定迭代继续（比如程序中断了）
-uv run nep-auto-main my_config.yaml --start-iter 3
+uv run learnep my_config.yaml --start-iter 3
 ```
 
 ## 📂 目录结构
@@ -205,7 +205,7 @@ nep:
     generation     100000
   
   first_input_content: |      # 首次训练的 nep.in 内容
-    # 使用 nep-auto-first-train 时使用
+    # 使用 learnep-first-train 时使用
     # 通常需要更多的 generation
     version        4
     type           3 K Li Ge
@@ -391,16 +391,16 @@ uv sync
 uv pip install -e .
 
 # 4. 生成配置文件
-nep-auto-init-config
+learnep-init-config
 
 # 5. 编辑配置文件
 vim config.yaml
 
 # 6. (可选) 如果没有初始 NEP 模型，从头训练
-nep-auto-first-train config.yaml
+learnep-first-train config.yaml
 
 # 7. 运行主动学习
-nep-auto-main config.yaml
+learnep config.yaml
 
 # 8. 监控日志
 tail -f work/active_learning.log
@@ -414,7 +414,7 @@ tail -f work/active_learning.log
 
 **解决**: 从 iter_1 开始：
 ```bash
-uv run nep-auto-main my_config.yaml --start-iter 1
+uv run learnep my_config.yaml --start-iter 1
 ```
 
 ### 问题 2: "NEP 模型元素类型不匹配"
@@ -445,8 +445,8 @@ uv run nep-auto-main my_config.yaml --start-iter 1
 
 - ✅ **训练集修剪** - 使用 MaxVol 自动控制训练集规模，提高训练效率
 - ✅ **NEP restart 支持** - 支持 nep.restart 文件，每轮训练继承上一轮的优化状态
-- ✅ **配置文件初始化工具** - 新增 `nep-auto-init-config` 命令，快速生成配置文件模板
-- ✅ **首次训练工具** - 新增 `nep-auto-first-train` 命令，从零开始训练初始 NEP 模型
+- ✅ **配置文件初始化工具** - 新增 `learnep-init-config` 命令，快速生成配置文件模板
+- ✅ **首次训练工具** - 新增 `learnep-first-train` 命令，从零开始训练初始 NEP 模型
 - ✅ **改进的文档** - 更详细的配置说明和使用示例
 - ✅ **包数据配置** - 确保 YAML 配置模板随包安装
 

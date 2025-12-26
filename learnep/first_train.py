@@ -20,7 +20,7 @@ from .config import load_config, Config
 
 def setup_logger(log_file: Path) -> logging.Logger:
     """设置日志记录器"""
-    logger = logging.Logger("nep-auto-first-train", level=logging.INFO)
+    logger = logging.Logger("learnep-first-train", level=logging.INFO)
 
     # 文件处理器
     fh = logging.FileHandler(log_file)
@@ -110,7 +110,7 @@ def first_train(config: Config, logger: logging.Logger) -> None:
     logger.info(f'  initial_nep_restart: "{train_dir}/nep.restart"')
     logger.info("")
     logger.info("之后运行主动学习：")
-    logger.info("  nep-auto-main config.yaml")
+    logger.info("  learnep config.yaml")
     logger.info("=" * 80)
 
 
@@ -121,7 +121,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用示例:
-  nep-auto-first-train config.yaml
+  learnep-first-train config.yaml
 
 说明:
   此命令用于从零开始训练第一个 NEP 模型。

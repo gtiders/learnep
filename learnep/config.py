@@ -332,7 +332,7 @@ def main():
     import sys
 
     if len(sys.argv) < 2:
-        print("用法: nep-auto-config <config_file.yaml>")
+        print("用法: learnep-config <config_file.yaml>")
         sys.exit(1)
 
     try:

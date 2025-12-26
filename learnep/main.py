@@ -22,17 +22,17 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="NEP 主动学习框架",
+        description="LearnEP - NEP 主动学习框架",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""示例:
   # 从头开始运行
-  nep-auto-main config.yaml
+  learnep config.yaml
 
   # 从指定迭代继续运行
-  nep-auto-main config.yaml --start-iter 5
+  learnep config.yaml --start-iter 5
 
   # 仅初始化
-  nep-auto-init config.yaml
+  learnep-init config.yaml
         """,
     )
     parser.add_argument("config", type=str, help="配置文件路径")
@@ -52,7 +52,7 @@ def main() -> None:
         sys.exit(1)
     # 加载配置
     print("=" * 80)
-    print("NEP 主动学习框架")
+    print("LearnEP - NEP 主动学习框架")
     print("=" * 80)
     print(f"\n加载配置文件: {config_file}")
 
