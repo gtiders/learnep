@@ -104,8 +104,8 @@ def _maxvol_core(
     """
     n, r = A.shape
 
-    if n <= r:
-        raise ValueError(f"输入矩阵必须是高矩阵 (n > r)，当前: n={n}, r={r}")
+    if n < r:
+        raise ValueError(f"输入矩阵必须是高矩阵 (n >= r)，当前: n={n}, r={r}")
 
     # LU decomposition for initialization
     P, L, U = lu(A, check_finite=False)
@@ -323,7 +323,7 @@ def compute_descriptor_projection(
             # Verify the matrix is tall (overdetermined system)
             # MaxVol 算法是按元素类型分别进行的，所以每个元素都需要满足超定条件
             n, d = projection_dict_arr[elem].shape
-            if n <= d:
+            if n < d:
                 error_msg = (
                     f"\n{'=' * 80}\n"
                     f"错误：元素 '{elem}' 的训练数据不足以运行 MaxVol 算法\n"
@@ -332,13 +332,14 @@ def compute_descriptor_projection(
                     f"  元素类型: {elem}\n"
                     f"  该元素的原子环境数量: {n}\n"
                     f"  NEP 描述符维度: {d}\n"
-                    f"  需要满足: 原子数 > 描述符维度\n\n"
+                    f"  需要满足: 原子数 >= 描述符维度\n\n"
                     f"MaxVol 算法要求 (按元素类型):\n"
-                    f"  - 每种元素的原子数量必须大于描述符维度\n"
+                    f"  - 每种元素的原子数量必须大于等于描述符维度\n"
+                    f"  - 当原子数等于描述符维度时，所有原子都会被选入活跃集\n"
                     f"  - 不同元素类型分别计算活跃集\n\n"
                     f"建议解决方案:\n"
                     f"  1. 增加训练集中包含元素 '{elem}' 的结构数量\n"
-                    f"  2. 至少需要 {d + 1} 个 '{elem}' 原子环境\n"
+                    f"  2. 至少需要 {d} 个 '{elem}' 原子环境\n"
                     f"  3. 建议提供至少 {d * 2} 个 '{elem}' 原子以获得更好的效果\n"
                     f"  4. 检查所有元素类型 ({', '.join(elements)}) 是否都有足够的原子\n"
                     f"{'=' * 80}\n"
@@ -870,7 +871,7 @@ def prune_training_set_maxvol(
     print(f"  描述符维度: {d}")
 
     # 检查是否满足 MaxVol 要求
-    if n <= d:
+    if n < d:
         print(f"警告: 结构数 ({n}) <= 描述符维度 ({d})，无法使用 MaxVol")
         print("      返回所有结构")
         return structures
