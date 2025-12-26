@@ -433,7 +433,7 @@ class IterationManager:
             # 写入 POSCAR
             from ase.io import write as ase_write
 
-            ase_write(str(task_dir / "POSCAR"), structure, format="vasp")
+            ase_write(str(task_dir / "POSCAR"), structure, format="vasp", direct=True)
 
             # 复制输入文件
             shutil.copy2(self.config.vasp.incar_file, task_dir / "INCAR")
