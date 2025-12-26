@@ -70,12 +70,17 @@ class GpumdConfig:
 
 @dataclass
 class SelectionConfig:
-    """MaxVol 选择配置"""
+    """结构选择配置
 
-    gamma_tol: float
-    batch_size: int
-    fps_min_distance: float
-    fps_enabled: bool
+    method: 选择方法，可选值:
+        - "maxvol": 使用 MaxVol 算法选择能最大化描述符空间覆盖的结构
+        - "fps": 使用 FPS (最远点采样) 算法选择多样性最大的结构
+    """
+
+    method: str  # 选择方法: "maxvol" 或 "fps"
+    gamma_tol: float  # MaxVol 收敛阈值
+    batch_size: int  # 批处理大小
+    fps_min_distance: float  # FPS 初始最小距离
 
 
 @dataclass
@@ -267,11 +272,24 @@ def load_config(config_file: str) -> Config:
 
     # 解析选择配置
     selection_raw = raw_config.get("selection", {})
+
+    # 处理向后兼容：如果使用旧的 fps_enabled 参数，转换为新的 method 参数
+    if "method" in selection_raw:
+        method = selection_raw.get("method", "maxvol").lower()
+        if method not in ("maxvol", "fps"):
+            raise ValueError(
+                f"selection.method 必须是 'maxvol' 或 'fps'，当前值: {method}"
+            )
+    else:
+        # 向后兼容：fps_enabled=True 对应 method="fps"，否则 method="maxvol"
+        fps_enabled = selection_raw.get("fps_enabled", False)
+        method = "fps" if fps_enabled else "maxvol"
+
     selection_config = SelectionConfig(
+        method=method,
         gamma_tol=selection_raw.get("gamma_tol", 1.001),
         batch_size=selection_raw.get("batch_size", 10000),
         fps_min_distance=selection_raw.get("fps_min_distance", 0.01),
-        fps_enabled=selection_raw.get("fps_enabled", True),
     )
 
     return Config(
@@ -320,9 +338,12 @@ def print_config_summary(config: Config) -> None:
         print(f"    - {cond.id}: {cond.structure_file}")
     print(f"  超时时间: {config.gpumd.timeout} 秒")
 
-    print("\n[MaxVol 配置]")
+    print("\n[结构选择配置]")
+    print(f"  选择方法: {config.selection.method}")
     print(f"  Gamma 阈值: {config.selection.gamma_tol}")
     print(f"  批处理大小: {config.selection.batch_size}")
+    if config.selection.method == "fps":
+        print(f"  FPS 初始最小距离: {config.selection.fps_min_distance}")
 
     print("=" * 80)
 

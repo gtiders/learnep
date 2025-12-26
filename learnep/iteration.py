@@ -12,7 +12,6 @@
 import shutil
 import subprocess
 import time
-import random
 import logging
 from pathlib import Path
 from typing import List, Optional
@@ -22,7 +21,8 @@ from ase import Atoms
 from .config import Config
 from .maxvol import (
     select_active_set,
-    select_extension_structures,
+    select_candidates_maxvol,
+    select_candidates_fps,
     read_trajectory,
     write_trajectory,
     write_asi_file,
@@ -333,6 +333,10 @@ class IterationManager:
         """
         选择待标注的新结构
 
+        支持两种独立的选择算法：
+        - maxvol: 使用 MaxVol 算法选择能最大化描述符空间的结构
+        - fps: 使用最远点采样选择多样性最大的结构
+
         参数:
             iter_num: 当前迭代编号
 
@@ -365,39 +369,36 @@ class IterationManager:
         self.logger.info(f"训练集结构数: {len(train_structures)}")
         self.logger.info(f"候选结构数: {len(candidate_structures)}")
 
-        # 执行 MaxVol 选择
-        self.logger.info("\n执行 MaxVol 选择...")
-        selected = select_extension_structures(
-            train_trajectory=train_structures,
-            candidate_trajectory=candidate_structures,
-            nep_file=str(nep_file),
-            gamma_tol=self.config.selection.gamma_tol,
-            batch_size=self.config.selection.batch_size,
-        )
-
-        self.logger.info(f"MaxVol 选中 {len(selected)} 个结构")
-
-        # FPS 二次筛选（可选）
         max_structures = self.config.global_config.max_structures_per_iteration
+        method = self.config.selection.method.lower()
 
-        if self.config.selection.fps_enabled and len(selected) > max_structures:
-            self.logger.info("\n启用 FPS 二次筛选...")
-            from .maxvol import apply_fps_filter
+        if method == "fps":
+            # FPS 模式：直接使用最远点采样
+            self.logger.info(f"\n使用 FPS 选择（目标: {max_structures} 个结构）...")
 
-            selected = apply_fps_filter(
-                structures=selected,
+            selected = select_candidates_fps(
+                candidate_trajectory=candidate_structures,
                 nep_file=str(nep_file),
                 max_count=max_structures,
                 initial_min_distance=self.config.selection.fps_min_distance,
-                show_progress=False,  # 不显示进度条，避免日志混乱
+                show_progress=False,
             )
-            self.logger.info(f"FPS 筛选后: {len(selected)} 个结构")
-        elif len(selected) > max_structures:
-            # 传统方式：随机丢弃
-            self.logger.info(f"限制为 {max_structures} 个结构（随机选择）")
-            random.seed(42)  # 保证可重复性
-            random.shuffle(selected)
-            selected = selected[:max_structures]
+            self.logger.info(f"FPS 选中 {len(selected)} 个结构")
+
+        else:
+            # MaxVol 模式（默认）
+            self.logger.info(f"\n使用 MaxVol 选择（目标: {max_structures} 个结构）...")
+
+            selected = select_candidates_maxvol(
+                train_trajectory=train_structures,
+                candidate_trajectory=candidate_structures,
+                nep_file=str(nep_file),
+                max_count=max_structures,
+                gamma_tol=self.config.selection.gamma_tol,
+                batch_size=self.config.selection.batch_size,
+                show_progress=False,
+            )
+            self.logger.info(f"MaxVol 选中 {len(selected)} 个结构")
 
         return selected
 

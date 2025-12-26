@@ -574,6 +574,179 @@ def select_active_set(
     return active_set, selected_structures
 
 
+def select_structures_maxvol(
+    train_structures: list[Atoms],
+    candidate_structures: list[Atoms],
+    nep_file: str | Path,
+    max_structures: int,
+    gamma_tol: float = 1.001,
+    batch_size: int = 10000,
+) -> list[Atoms]:
+    """
+    使用 MaxVol 算法从候选结构中选择指定数量的新结构。
+
+    与 select_extension_structures 不同，此函数直接限制输出数量，
+    而不是返回所有被 MaxVol 选中的结构。
+
+    算法流程：
+    1. 合并训练集和候选集
+    2. 计算合并后所有结构的描述符投影
+    3. 执行 MaxVol 选择，获取所有被选中的结构索引
+    4. 筛选出仅来自候选集的结构
+    5. 如果超过 max_structures，使用增量 MaxVol 选择最重要的
+
+    参数:
+        train_structures: 当前训练集
+        candidate_structures: 候选结构（来自 MD 探索）
+        nep_file: NEP 势函数文件路径
+        max_structures: 最大选择数量
+        gamma_tol: MaxVol 收敛阈值
+        batch_size: 批处理大小
+
+    返回:
+        被选中的结构列表（数量 <= max_structures）
+    """
+    if len(candidate_structures) == 0:
+        print("没有候选结构")
+        return []
+
+    if len(candidate_structures) <= max_structures:
+        print(
+            f"候选结构数 ({len(candidate_structures)}) <= 限制 ({max_structures})，返回全部"
+        )
+        return candidate_structures
+
+    train_size = len(train_structures)
+    merged_trajectory = train_structures + candidate_structures
+
+    # 计算描述符投影
+    print("计算描述符投影...")
+    descriptor_result = compute_descriptor_projection(merged_trajectory, nep_file)
+
+    # 执行 MaxVol 获取初步选择
+    print("执行 MaxVol 选择...")
+    active_set = generate_active_set(
+        descriptor_result,
+        gamma_tol=gamma_tol,
+        batch_size=batch_size,
+        write_asi=False,
+    )
+
+    # 筛选出仅来自候选集的结构索引
+    candidate_indices = [i for i in active_set.structure_indices if i >= train_size]
+    print(f"MaxVol 从候选集中选出 {len(candidate_indices)} 个结构")
+
+    if len(candidate_indices) <= max_structures:
+        # 不需要进一步筛选
+        return [merged_trajectory[i] for i in candidate_indices]
+
+    # 需要进一步筛选：使用 MaxVol 选择最具代表性的 max_structures 个
+    print(f"需要从 {len(candidate_indices)} 个结构中筛选 {max_structures} 个...")
+
+    # 提取候选结构的描述符
+    candidate_atoms = [merged_trajectory[i] for i in candidate_indices]
+
+    # 计算仅候选结构的描述符
+    calc = NEP(str(nep_file))
+
+    # 按元素收集描述符和结构映射
+    from pynep.calculate import NEP as NEP_Calc
+
+    calc = NEP_Calc(str(nep_file))
+
+    # 计算每个候选结构的平均描述符
+    structure_descriptors = []
+    for atoms in candidate_atoms:
+        desc = calc.get_property("descriptor", atoms)
+        # 使用结构的平均描述符
+        avg_desc = np.mean(desc, axis=0)
+        structure_descriptors.append(avg_desc)
+
+    A = np.vstack(structure_descriptors)
+    print(f"结构描述符矩阵形状: {A.shape}")
+
+    n, d = A.shape
+    if n <= max_structures:
+        # 如果结构数不超过限制，返回全部
+        return candidate_atoms
+
+    # 使用贪婪 MaxVol 选择 max_structures 个最具代表性的结构
+    selected_indices = _greedy_maxvol_select(A, max_structures)
+
+    selected = [candidate_atoms[i] for i in selected_indices]
+    print(f"最终选中 {len(selected)} 个结构")
+
+    return selected
+
+
+def _greedy_maxvol_select(
+    A: NDArray[np.float64],
+    k: int,
+) -> list[int]:
+    """
+    贪婪 MaxVol 选择：从 n 个向量中选择 k 个使体积最大化。
+
+    使用贪婪策略：每次选择能最大化当前子空间体积的向量。
+
+    参数:
+        A: 描述符矩阵，形状 (n, d)
+        k: 要选择的数量
+
+    返回:
+        被选中的索引列表
+    """
+    n, d = A.shape
+    k = min(k, n, d)  # 确保 k 不超过 n 和 d
+
+    # 使用 QR 分解进行贪婪选择
+    remaining = set(range(n))
+    selected = []
+
+    # 初始化：选择范数最大的向量
+    norms = np.linalg.norm(A, axis=1)
+    first = np.argmax(norms)
+    selected.append(first)
+    remaining.remove(first)
+
+    # 当前子空间的基
+    Q = A[first : first + 1].T.copy()
+    Q = Q / np.linalg.norm(Q)
+
+    for _ in range(k - 1):
+        if not remaining:
+            break
+
+        # 计算每个剩余向量到当前子空间的距离
+        max_dist = -1
+        best_idx = -1
+
+        for idx in remaining:
+            v = A[idx]
+            # 投影到当前子空间
+            proj = Q @ (Q.T @ v)
+            # 计算垂直分量的范数
+            dist = np.linalg.norm(v - proj)
+
+            if dist > max_dist:
+                max_dist = dist
+                best_idx = idx
+
+        if best_idx >= 0:
+            selected.append(best_idx)
+            remaining.remove(best_idx)
+
+            # 更新子空间基（Gram-Schmidt）
+            v = A[best_idx]
+            proj = Q @ (Q.T @ v)
+            new_basis = v - proj
+            norm = np.linalg.norm(new_basis)
+            if norm > 1e-10:
+                new_basis = new_basis / norm
+                Q = np.column_stack([Q, new_basis])
+
+    return selected
+
+
 def select_extension_structures(
     train_trajectory: list[Atoms],
     candidate_trajectory: list[Atoms],
@@ -907,3 +1080,221 @@ def prune_training_set_maxvol(
         np.random.shuffle(indices)
         selected_indices = indices[:target_count]
         return [structures[i] for i in selected_indices]
+
+
+# =============================================================================
+# 候选结构选择函数 (主动学习迭代使用)
+# =============================================================================
+
+
+def select_candidates_maxvol(
+    train_trajectory: list[Atoms],
+    candidate_trajectory: list[Atoms],
+    nep_file: str | Path,
+    max_count: int,
+    gamma_tol: float = 1.001,
+    batch_size: int = 10000,
+    show_progress: bool = True,
+) -> list[Atoms]:
+    """
+    使用 MaxVol 算法从候选结构中选择指定数量的新结构。
+
+    该函数首先合并训练集和候选集，计算描述符投影，然后使用 MaxVol
+    算法评估每个候选结构对描述符空间覆盖的贡献。只返回来自候选集
+    的结构，并按照对空间覆盖贡献从大到小排序。
+
+    算法流程:
+    1. 合并训练集和候选集的描述符
+    2. 计算训练集的活跃集逆矩阵
+    3. 计算每个候选结构的 gamma 值（空间贡献度）
+    4. 按 gamma 值从大到小排序，选择最多 max_count 个结构
+
+    参数:
+        train_trajectory: 当前训练集结构列表
+        candidate_trajectory: 候选结构列表（来自 MD 探索）
+        nep_file: NEP 势函数文件路径
+        max_count: 最多选择的结构数量
+        gamma_tol: MaxVol 收敛阈值
+        batch_size: 批处理大小
+        show_progress: 是否显示进度条
+
+    返回:
+        选中的候选结构列表（仅来自候选集，按 gamma 贡献排序）
+    """
+    if NEP is None:
+        raise ImportError("请先安装 PyNEP: pip install pynep")
+
+    if len(candidate_trajectory) == 0:
+        return []
+
+    if len(candidate_trajectory) <= max_count:
+        print(
+            f"候选结构数 ({len(candidate_trajectory)}) <= 目标数 ({max_count})，返回所有候选"
+        )
+        return candidate_trajectory
+
+    print(f"\n使用 MaxVol 选择候选结构: {len(candidate_trajectory)} → 目标 {max_count}")
+    print(f"  训练集大小: {len(train_trajectory)}")
+    print(f"  候选集大小: {len(candidate_trajectory)}")
+
+    # 计算训练集的活跃集
+    print("\n1. 计算训练集的活跃集...")
+    train_desc_result = compute_descriptor_projection(
+        train_trajectory, nep_file, show_progress=show_progress
+    )
+    train_active_set = generate_active_set(
+        train_desc_result,
+        gamma_tol=gamma_tol,
+        batch_size=batch_size,
+        write_asi=False,
+    )
+
+    # 计算候选结构的 gamma 值
+    print("\n2. 计算候选结构的 gamma 值...")
+    calc = NEP(str(nep_file))
+
+    # 对每个候选结构计算其最大 gamma 值
+    candidate_gammas = []
+    iterator = (
+        tqdm(candidate_trajectory, desc="计算 gamma")
+        if show_progress
+        else candidate_trajectory
+    )
+
+    for atoms in iterator:
+        # 计算描述符投影
+        calc.calculate(atoms, ["B_projection"])
+        B_proj = calc.results["B_projection"]
+        symbols = atoms.get_chemical_symbols()
+
+        # 计算每个原子的 gamma
+        max_gamma = 1.0
+        for elem, inv_matrix in train_active_set.inverse_dict.items():
+            atom_indices = [i for i, sym in enumerate(symbols) if sym == elem]
+            if len(atom_indices) == 0:
+                continue
+
+            g = B_proj[atom_indices] @ inv_matrix
+            g = np.max(np.abs(g), axis=1)
+            max_gamma = max(max_gamma, float(np.max(g)))
+
+        candidate_gammas.append(max_gamma)
+
+    # 按 gamma 值从大到小排序
+    print("\n3. 按 gamma 值排序选择...")
+    sorted_indices = np.argsort(candidate_gammas)[::-1]  # 降序
+
+    # 选择 gamma 值最大的 max_count 个结构
+    selected_indices = sorted_indices[:max_count]
+    selected_gammas = [candidate_gammas[i] for i in selected_indices]
+
+    print(f"  选中 {len(selected_indices)} 个结构")
+    print(f"  Gamma 范围: {min(selected_gammas):.4f} ~ {max(selected_gammas):.4f}")
+
+    selected_structures = [candidate_trajectory[i] for i in selected_indices]
+    print(
+        f"✓ MaxVol 选择完成: {len(candidate_trajectory)} → {len(selected_structures)}\n"
+    )
+
+    return selected_structures
+
+
+def select_candidates_fps(
+    candidate_trajectory: list[Atoms],
+    nep_file: str | Path,
+    max_count: int,
+    initial_min_distance: float = 0.01,
+    show_progress: bool = True,
+) -> list[Atoms]:
+    """
+    使用 FPS (最远点采样) 算法从候选结构中选择指定数量的结构。
+
+    该函数直接对候选结构应用 FPS 算法，自动调整距离阈值以确保
+    选中的结构数量达到目标。FPS 算法保证选中的结构在描述符空间
+    中具有最大的多样性。
+
+    参数:
+        candidate_trajectory: 候选结构列表
+        nep_file: NEP 势函数文件路径
+        max_count: 目标结构数量
+        initial_min_distance: 初始最小距离阈值
+        show_progress: 是否显示进度
+
+    返回:
+        筛选后的结构列表（数量 <= max_count）
+    """
+    if FarthestPointSample is None:
+        raise ImportError("请先安装 PyNEP: pip install pynep")
+
+    if len(candidate_trajectory) == 0:
+        return []
+
+    if len(candidate_trajectory) <= max_count:
+        print(
+            f"候选结构数 ({len(candidate_trajectory)}) <= 目标数 ({max_count})，返回所有候选"
+        )
+        return candidate_trajectory
+
+    print(f"\n使用 FPS 选择候选结构: {len(candidate_trajectory)} → 目标 {max_count}")
+
+    # 计算描述符（结构级别平均）
+    calc = NEP(str(nep_file))
+
+    descriptors = []
+    iterator = (
+        tqdm(candidate_trajectory, desc="计算描述符")
+        if show_progress
+        else candidate_trajectory
+    )
+
+    for structure in iterator:
+        desc = calc.get_property("descriptor", structure)
+        # 对每个结构求平均描述符
+        descriptors.append(np.mean(desc, axis=0))
+
+    descriptors_array = np.array(descriptors)
+    print(f"描述符形状: {descriptors_array.shape}")
+
+    # 自动调整 min_distance 以满足 max_count 约束
+    min_distance = initial_min_distance
+    max_iterations = 15
+
+    for attempt in range(max_iterations):
+        sampler = FarthestPointSample(min_distance=min_distance)
+        selected_indices = sampler.select(descriptors_array, [])
+        n_selected = len(selected_indices)
+
+        print(
+            f"  尝试 {attempt + 1}: min_distance={min_distance:.6f}, "
+            f"选中 {n_selected} 个结构"
+        )
+
+        if n_selected >= max_count:
+            # 选出的数量足够或过多
+            if n_selected > max_count:
+                # 保留前 max_count 个（FPS 已经按距离排序）
+                selected_indices = selected_indices[:max_count]
+
+            selected_structures = [candidate_trajectory[i] for i in selected_indices]
+            print(
+                f"✓ FPS 选择完成: {len(candidate_trajectory)} → "
+                f"{len(selected_structures)}\n"
+            )
+            return selected_structures
+
+        # 数量不足，降低 min_distance
+        min_distance *= 0.6  # 每次减少 40%
+
+        if min_distance < 1e-8:
+            # min_distance 太小了，直接返回所有选中的
+            print(
+                f"  警告: min_distance 已降至 {min_distance:.2e}，"
+                f"仅选出 {n_selected} 个结构"
+            )
+            selected_structures = [candidate_trajectory[i] for i in selected_indices]
+            return selected_structures
+
+    # 达到最大尝试次数，返回当前结果
+    print(f"  警告: 达到最大尝试次数，FPS 仅选出 {len(selected_indices)} 个结构")
+    selected_structures = [candidate_trajectory[i] for i in selected_indices]
+    return selected_structures
