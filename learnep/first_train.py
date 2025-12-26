@@ -92,14 +92,42 @@ def first_train(config: Config, logger: logging.Logger) -> None:
         f.write(_ensure_done_marker(config.nep.job_script))
     logger.info("  创建作业脚本（已自动添加 DONE 标记）")
 
+    # 提交训练作业
+    logger.info("")
+    logger.info("提交训练作业...")
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            config.global_config.submit_command,
+            shell=True,
+            cwd=train_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode == 0:
+            logger.info(f"  ✓ 作业已提交")
+            if result.stdout.strip():
+                logger.info(f"  输出: {result.stdout.strip()}")
+        else:
+            logger.warning(f"  ✗ 作业提交失败 (退出码: {result.returncode})")
+            if result.stderr.strip():
+                logger.warning(f"  错误: {result.stderr.strip()}")
+    except subprocess.TimeoutExpired:
+        logger.warning("  ✗ 作业提交超时")
+    except Exception as e:
+        logger.warning(f"  ✗ 作业提交失败: {e}")
+
     logger.info("")
     logger.info("=" * 80)
-    logger.info("准备完成！")
+    logger.info("准备完成！作业已提交")
     logger.info("=" * 80)
     logger.info("")
-    logger.info("下一步：提交训练任务")
-    logger.info("  1. cd {train_dir}")
-    logger.info("  2. 提交作业: qsub job.sh (或其他调度命令)")
+    logger.info("训练进行中...")
+    logger.info(f"  - 训练目录: {train_dir}")
+    logger.info(f"  - 检查状态: ls {train_dir}/DONE")
     logger.info("")
     logger.info("训练完成后：")
     logger.info(f"  - nep.txt 将生成在 {train_dir}/nep.txt")
