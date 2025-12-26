@@ -158,11 +158,18 @@ def main():
         (work_dir / "dummy_nep.txt").touch()
         (work_dir / "dummy_restart").touch()
 
-        config = load_config(raw_config, config_file.parent)
+        # 保存临时配置文件并调用 load_config
+        temp_config_file = work_dir / "temp_config.yaml"
+        with open(temp_config_file, "w") as f:
+            yaml.dump(raw_config, f)
 
-        # 删除临时文件
-        (work_dir / "dummy_nep.txt").unlink()
-        (work_dir / "dummy_restart").unlink()
+        try:
+            config = load_config(str(temp_config_file))
+        finally:
+            # 删除临时文件
+            temp_config_file.unlink(missing_ok=True)
+            (work_dir / "dummy_nep.txt").unlink(missing_ok=True)
+            (work_dir / "dummy_restart").unlink(missing_ok=True)
 
     except Exception as e:
         print(f"错误: 配置加载失败: {e}")
