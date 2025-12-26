@@ -108,7 +108,7 @@ def first_train(config: Config, logger: logging.Logger) -> None:
         )
 
         if result.returncode == 0:
-            logger.info(f"  ✓ 作业已提交")
+            logger.info("  ✓ 作业已提交")
             if result.stdout.strip():
                 logger.info(f"  输出: {result.stdout.strip()}")
         else:
