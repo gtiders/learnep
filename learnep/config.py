@@ -25,6 +25,8 @@ class GlobalConfig:
     initial_train_data: Path
     submit_command: str
     check_interval: int
+    scheduler_type: str  # 调度系统类型: "pbs", "slurm", "lsf", "auto"
+    job_status_command: str  # 作业状态查询命令，{job_id} 会被替换
 
 
 @dataclass
@@ -196,6 +198,8 @@ def load_config(config_file: str) -> Config:
         initial_train_data=initial_train_data,
         submit_command=global_raw.get("submit_command", "qsub job.sh"),
         check_interval=global_raw.get("check_interval", 30),
+        scheduler_type=global_raw.get("scheduler_type", "pbs"),
+        job_status_command=global_raw.get("job_status_command", "qstat {job_id}"),
     )
 
     # 解析 VASP 配置

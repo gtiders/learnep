@@ -61,8 +61,131 @@ class TaskManager:
         self.logger = logger
         self.submit_command = config.global_config.submit_command
         self.check_interval = config.global_config.check_interval
+        self.scheduler_type = config.global_config.scheduler_type.lower()
+        self.job_status_command = config.global_config.job_status_command
 
-    def submit_job(self, job_dir: Path) -> bool:
+        # 存储作业目录到任务号的映射
+        self.job_ids: dict[Path, str] = {}
+
+    def _parse_job_id(self, output: str) -> Optional[str]:
+        """
+        从提交命令的输出中解析任务号
+
+        参数:
+            output: 提交命令的标准输出
+
+        返回:
+            解析出的任务号，失败返回 None
+        """
+        output = output.strip()
+        if not output:
+            return None
+
+        scheduler = self.scheduler_type
+
+        if scheduler == "pbs":
+            # PBS 格式: "12345.pbs01" 或直接 "12345"
+            # 直接返回整行（去除空白）
+            return output.split("\n")[0].strip()
+
+        elif scheduler == "slurm":
+            # SLURM 格式: "Submitted batch job 12345"
+            import re
+
+            match = re.search(r"Submitted batch job (\d+)", output)
+            if match:
+                return match.group(1)
+            # 也可能直接返回数字
+            if output.isdigit():
+                return output
+
+        elif scheduler == "lsf":
+            # LSF 格式: "Job <12345> is submitted to queue <normal>"
+            import re
+
+            match = re.search(r"Job <(\d+)>", output)
+            if match:
+                return match.group(1)
+
+        elif scheduler == "auto":
+            # 自动检测：尝试各种格式
+            import re
+
+            # 尝试 SLURM 格式
+            match = re.search(r"Submitted batch job (\d+)", output)
+            if match:
+                return match.group(1)
+
+            # 尝试 LSF 格式
+            match = re.search(r"Job <(\d+)>", output)
+            if match:
+                return match.group(1)
+
+            # 尝试 PBS 格式（直接返回第一行）
+            first_line = output.split("\n")[0].strip()
+            if first_line:
+                return first_line
+
+        # 默认：返回第一行
+        return output.split("\n")[0].strip()
+
+    def _is_job_running(self, job_id: str) -> bool:
+        """
+        检查任务是否还在运行
+
+        参数:
+            job_id: 任务号
+
+        返回:
+            True 表示任务还在运行，False 表示任务已结束
+        """
+        try:
+            # 构建查询命令
+            cmd = self.job_status_command.format(job_id=job_id)
+
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            # 不同调度系统的判断逻辑
+            if self.scheduler_type == "pbs":
+                # PBS: 如果任务不存在，qstat 返回非零退出码
+                # 或者输出包含 "Unknown Job Id"
+                if result.returncode != 0:
+                    return False
+                if "Unknown Job Id" in result.stderr:
+                    return False
+                return True
+
+            elif self.scheduler_type == "slurm":
+                # SLURM: 任务不存在时 squeue 返回空或错误
+                if result.returncode != 0:
+                    return False
+                # 检查输出是否包含任务号
+                return job_id in result.stdout
+
+            elif self.scheduler_type == "lsf":
+                # LSF: 任务不存在时 bjobs 返回错误
+                if result.returncode != 0:
+                    return False
+                return job_id in result.stdout
+
+            else:
+                # auto 或其他：检查退出码
+                return result.returncode == 0
+
+        except subprocess.TimeoutExpired:
+            self.logger.warning(f"  检查任务状态超时: {job_id}")
+            return True  # 超时时假设任务还在运行
+        except Exception as e:
+            self.logger.warning(f"  检查任务状态失败: {job_id}, 错误: {e}")
+            return True  # 出错时假设任务还在运行
+
+    def submit_job(self, job_dir: Path) -> Optional[str]:
         """
         在指定目录提交作业
 
@@ -70,7 +193,7 @@ class TaskManager:
             job_dir: 作业目录
 
         返回:
-            是否提交成功
+            任务号，提交失败返回 None
         """
         try:
             # 切换到作业目录并执行提交命令
@@ -83,24 +206,33 @@ class TaskManager:
             )
 
             if result.returncode == 0:
-                self.logger.info(f"  作业已提交: {job_dir}")
-                if result.stdout.strip():
-                    self.logger.info(f"    输出: {result.stdout.strip()}")
-                return True
+                job_id = self._parse_job_id(result.stdout)
+                if job_id:
+                    self.job_ids[job_dir] = job_id
+                    self.logger.info(f"  作业已提交: {job_dir.name} (任务号: {job_id})")
+                else:
+                    self.logger.info(f"  作业已提交: {job_dir.name} (无法解析任务号)")
+                return job_id
             else:
                 self.logger.error(f"  作业提交失败: {job_dir}")
                 self.logger.error(f"    错误: {result.stderr}")
-                return False
+                return None
 
         except Exception as e:
             self.logger.error(f"  提交作业时发生异常: {e}")
-            return False
+            return None
 
     def wait_for_completion(
         self, job_dirs: List[Path], timeout: Optional[int] = None
     ) -> bool:
         """
-        等待所有作业完成（通过检测 DONE 文件）
+        等待所有作业完成
+
+        使用双重检测机制：
+        1. 检测 DONE 文件是否存在
+        2. 检测任务号是否还在队列中
+
+        任一条件满足即视为任务完成。
 
         参数:
             job_dirs: 作业目录列表
@@ -122,13 +254,24 @@ class TaskManager:
                 )
                 return False
 
-            # 检查每个作业的 DONE 文件
+            # 检查每个作业
             completed = []
             for job_dir in pending_jobs:
+                # 检测方式1: DONE 文件
                 done_file = job_dir / "DONE"
                 if done_file.exists():
                     completed.append(job_dir)
-                    self.logger.info(f"  作业完成: {job_dir.name}")
+                    self.logger.info(f"  作业完成 (DONE文件): {job_dir.name}")
+                    continue
+
+                # 检测方式2: 任务号状态
+                job_id = self.job_ids.get(job_dir)
+                if job_id and not self._is_job_running(job_id):
+                    completed.append(job_dir)
+                    self.logger.info(
+                        f"  作业完成 (任务结束): {job_dir.name} ({job_id})"
+                    )
+                    continue
 
             # 移除已完成的作业
             for job_dir in completed:
@@ -291,7 +434,7 @@ class IterationManager:
         # 提交所有作业
         self.logger.info(f"提交 {len(job_dirs)} 个 GPUMD 作业...")
         for job_dir in job_dirs:
-            if not self.task_manager.submit_job(job_dir):
+            if self.task_manager.submit_job(job_dir) is None:
                 return False
 
         # 等待完成
@@ -467,7 +610,7 @@ class IterationManager:
         # 提交所有作业
         self.logger.info("\n提交 VASP 作业...")
         for job_dir in job_dirs:
-            if not self.task_manager.submit_job(job_dir):
+            if self.task_manager.submit_job(job_dir) is None:
                 return False
 
         # 等待完成
@@ -700,7 +843,7 @@ class IterationManager:
         self.logger.info(f"NEP 训练目录: {nep_dir}")
 
         # 提交作业
-        if not self.task_manager.submit_job(nep_dir):
+        if self.task_manager.submit_job(nep_dir) is None:
             return False
 
         # 等待完成

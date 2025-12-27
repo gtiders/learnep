@@ -113,7 +113,7 @@ def main() -> None:
             logger.warning("\n用户中断程序")
             logger.info(f"当前进度: 迭代 {current_iter}")
             logger.info(
-                f"重启命令: python -m nep_auto.main {config_file} --start-iter {current_iter}"
+                f"重启命令: python -m learnep.main {config_file} --start-iter {current_iter}"
             )
             sys.exit(0)
 

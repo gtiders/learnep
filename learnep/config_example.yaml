@@ -42,6 +42,20 @@ global:
   
   # 任务状态检查间隔（秒）
   check_interval: 30
+  
+  # 调度系统类型: "pbs", "slurm", "lsf", "auto"
+  # - pbs: PBS/Torque 调度系统（默认）
+  # - slurm: SLURM 调度系统
+  # - lsf: IBM LSF 调度系统
+  # - auto: 自动检测（尝试解析各种格式）
+  scheduler_type: "pbs"
+  
+  # 任务状态查询命令
+  # {job_id} 会被替换为实际的任务号
+  # PBS 示例: "qstat {job_id}"
+  # SLURM 示例: "squeue -j {job_id}"
+  # LSF 示例: "bjobs {job_id}"
+  job_status_command: "qstat {job_id}"
 
 # =============================================================================
 # VASP 配置（DFT 标注）

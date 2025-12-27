@@ -44,7 +44,7 @@ def setup_logger(log_file: Path) -> logging.Logger:
     返回:
         配置好的 logger
     """
-    logger = logging.getLogger("nep_auto")
+    logger = logging.getLogger("learnep")
     logger.setLevel(logging.INFO)
 
     # 文件处理器
