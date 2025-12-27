@@ -43,14 +43,22 @@ def setup_logger(log_file: Path) -> logging.Logger:
     return logger
 
 
-def first_train(config: Config, logger: logging.Logger) -> None:
+def first_train(
+    config: Config, logger: logging.Logger, wait_for_completion: bool = True
+) -> tuple[Path, Path]:
     """
     从头训练第一个 NEP 模型
 
     参数:
         config: 配置对象
         logger: 日志记录器
+        wait_for_completion: 是否等待训练完成
+
+    返回:
+        (nep.txt 路径, nep.restart 路径)
     """
+    import time
+
     work_dir = config.global_config.work_dir
 
     logger.info("=" * 80)
@@ -64,7 +72,7 @@ def first_train(config: Config, logger: logging.Logger) -> None:
 
     # 复制训练数据
     train_src = config.global_config.initial_train_data
-    if not train_src.exists():
+    if not train_src or not train_src.exists():
         logger.error(f"训练数据不存在: {train_src}")
         raise FileNotFoundError(f"训练数据不存在: {train_src}")
 
@@ -92,6 +100,11 @@ def first_train(config: Config, logger: logging.Logger) -> None:
         f.write(_ensure_done_marker(config.nep.job_script))
     logger.info("  创建作业脚本（已自动添加 DONE 标记）")
 
+    # 输出文件路径
+    nep_txt = train_dir / "nep.txt"
+    nep_restart = train_dir / "nep.restart"
+    done_file = train_dir / "DONE"
+
     # 提交训练作业
     logger.info("")
     logger.info("提交训练作业...")
@@ -115,31 +128,69 @@ def first_train(config: Config, logger: logging.Logger) -> None:
             logger.warning(f"  ✗ 作业提交失败 (退出码: {result.returncode})")
             if result.stderr.strip():
                 logger.warning(f"  错误: {result.stderr.strip()}")
+            raise RuntimeError("作业提交失败")
     except subprocess.TimeoutExpired:
         logger.warning("  ✗ 作业提交超时")
+        raise RuntimeError("作业提交超时")
     except Exception as e:
         logger.warning(f"  ✗ 作业提交失败: {e}")
+        raise RuntimeError(f"作业提交失败: {e}")
+
+    if not wait_for_completion:
+        logger.info("")
+        logger.info("=" * 80)
+        logger.info("作业已提交，不等待完成")
+        logger.info(f"训练完成后文件将生成在: {train_dir}")
+        logger.info("=" * 80)
+        return nep_txt, nep_restart
+
+    # 等待训练完成
+    logger.info("")
+    logger.info("等待训练完成...")
+    logger.info(f"  检查间隔: {config.global_config.check_interval} 秒")
+    logger.info(f"  超时时间: {config.nep.timeout} 秒")
+
+    start_time = time.time()
+    timeout = config.nep.timeout
+
+    while True:
+        elapsed = time.time() - start_time
+
+        if elapsed > timeout:
+            logger.error(f"训练超时 ({timeout} 秒)")
+            raise RuntimeError(f"训练超时: {timeout} 秒")
+
+        # 检查 DONE 文件
+        if done_file.exists():
+            logger.info("  ✓ 检测到 DONE 文件，训练完成")
+            break
+
+        # 检查输出文件是否生成
+        if nep_txt.exists() and nep_restart.exists():
+            logger.info("  ✓ nep.txt 和 nep.restart 已生成")
+            break
+
+        # 显示进度
+        hours, remainder = divmod(int(elapsed), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        logger.info(f"  等待中... 已过 {hours:02d}:{minutes:02d}:{seconds:02d}")
+
+        time.sleep(config.global_config.check_interval)
+
+    # 验证输出文件
+    if not nep_txt.exists():
+        raise RuntimeError(f"训练完成但 nep.txt 未生成: {nep_txt}")
+    if not nep_restart.exists():
+        raise RuntimeError(f"训练完成但 nep.restart 未生成: {nep_restart}")
 
     logger.info("")
     logger.info("=" * 80)
-    logger.info("准备完成！作业已提交")
+    logger.info("初始 NEP 模型训练完成！")
+    logger.info(f"  nep.txt: {nep_txt}")
+    logger.info(f"  nep.restart: {nep_restart}")
     logger.info("=" * 80)
-    logger.info("")
-    logger.info("训练进行中...")
-    logger.info(f"  - 训练目录: {train_dir}")
-    logger.info(f"  - 检查状态: ls {train_dir}/DONE")
-    logger.info("")
-    logger.info("训练完成后：")
-    logger.info(f"  - nep.txt 将生成在 {train_dir}/nep.txt")
-    logger.info(f"  - nep.restart 将生成在 {train_dir}/nep.restart")
-    logger.info("")
-    logger.info("然后可以在配置文件中设置：")
-    logger.info(f'  initial_nep_model: "{train_dir}/nep.txt"')
-    logger.info(f'  initial_nep_restart: "{train_dir}/nep.restart"')
-    logger.info("")
-    logger.info("之后运行主动学习：")
-    logger.info("  learnep config.yaml")
-    logger.info("=" * 80)
+
+    return nep_txt, nep_restart
 
 
 def main():

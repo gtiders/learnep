@@ -118,49 +118,71 @@ def initialize_workspace(config: Config, logger: logging.Logger) -> None:
     train_dst = iter0_dir / "train.xyz"
 
     if init_mode == InitMode.NO_MODEL:
-        # 无模型模式：需要先训练
-        logger.info("  无 NEP 模型，需要先运行 first_train")
+        # 无模型模式：自动训练 NEP
+        logger.info("  无 NEP 模型，自动开始训练...")
         logger.info("")
-        logger.info("=" * 80)
-        logger.info("请先运行以下命令训练初始 NEP 模型:")
-        logger.info("  learnep-first-train config.yaml")
-        logger.info("")
-        logger.info("训练完成后再次运行 learnep 开始主动学习")
-        logger.info("=" * 80)
-        raise RuntimeError("需要先训练 NEP 模型，请运行 learnep-first-train")
 
-    # FULL 或 NO_DATA 模式：复制 NEP 文件
-    if config.global_config.initial_nep_model:
-        shutil.copy2(config.global_config.initial_nep_model, nep_dst)
-        logger.info(
-            f"  复制 NEP 模型: {config.global_config.initial_nep_model} -> {nep_dst}"
-        )
-    else:
-        raise RuntimeError("未找到 NEP 模型文件")
+        from .first_train import first_train
 
-    if config.global_config.initial_nep_restart:
-        shutil.copy2(config.global_config.initial_nep_restart, nep_restart_dst)
-        logger.info(
-            f"  复制 NEP restart: {config.global_config.initial_nep_restart} -> {nep_restart_dst}"
+        nep_model_path, nep_restart_path = first_train(
+            config, logger, wait_for_completion=True
         )
-    else:
-        raise RuntimeError("未找到 NEP restart 文件")
 
-    # 处理训练数据
-    if init_mode == InitMode.FULL:
-        # 完整模式：复制训练数据
-        shutil.copy2(config.global_config.initial_train_data, train_dst)
+        # 复制训练好的模型到 iter_1
+        shutil.copy2(nep_model_path, nep_dst)
+        logger.info(f"  复制训练好的 NEP 模型: {nep_model_path} -> {nep_dst}")
+
+        shutil.copy2(nep_restart_path, nep_restart_dst)
         logger.info(
-            f"  复制训练数据: {config.global_config.initial_train_data} -> {train_dst}"
+            f"  复制训练好的 NEP restart: {nep_restart_path} -> {nep_restart_dst}"
         )
-        train_structures = read_trajectory(str(train_dst))
-        logger.info(f"  训练集包含 {len(train_structures)} 个结构")
-    else:
-        # NO_DATA 模式：创建空的 train.xyz
-        train_dst.touch()
-        logger.info(f"  创建空的训练数据文件: {train_dst}")
-        logger.info("  训练集包含 0 个结构（将使用冷启动模式）")
-        train_structures = []
+
+        # 复制训练数据
+        if config.global_config.initial_train_data:
+            shutil.copy2(config.global_config.initial_train_data, train_dst)
+            logger.info(
+                f"  复制训练数据: {config.global_config.initial_train_data} -> {train_dst}"
+            )
+            train_structures = read_trajectory(str(train_dst))
+            logger.info(f"  训练集包含 {len(train_structures)} 个结构")
+        else:
+            train_dst.touch()
+            train_structures = []
+            logger.info("  创建空的训练数据文件")
+
+    elif init_mode in (InitMode.FULL, InitMode.NO_DATA):
+        # FULL 或 NO_DATA 模式：复制 NEP 文件
+        if config.global_config.initial_nep_model:
+            shutil.copy2(config.global_config.initial_nep_model, nep_dst)
+            logger.info(
+                f"  复制 NEP 模型: {config.global_config.initial_nep_model} -> {nep_dst}"
+            )
+        else:
+            raise RuntimeError("未找到 NEP 模型文件")
+
+        if config.global_config.initial_nep_restart:
+            shutil.copy2(config.global_config.initial_nep_restart, nep_restart_dst)
+            logger.info(
+                f"  复制 NEP restart: {config.global_config.initial_nep_restart} -> {nep_restart_dst}"
+            )
+        else:
+            raise RuntimeError("未找到 NEP restart 文件")
+
+        # 处理训练数据
+        if init_mode == InitMode.FULL:
+            # 完整模式：复制训练数据
+            shutil.copy2(config.global_config.initial_train_data, train_dst)
+            logger.info(
+                f"  复制训练数据: {config.global_config.initial_train_data} -> {train_dst}"
+            )
+            train_structures = read_trajectory(str(train_dst))
+            logger.info(f"  训练集包含 {len(train_structures)} 个结构")
+        else:
+            # NO_DATA 模式：创建空的 train.xyz
+            train_dst.touch()
+            logger.info(f"  创建空的训练数据文件: {train_dst}")
+            logger.info("  训练集包含 0 个结构（将使用冷启动模式）")
+            train_structures = []
 
     # =========================================================================
     # 步骤 3: 生成活跃集
