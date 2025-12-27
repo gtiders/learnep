@@ -1352,17 +1352,30 @@ class IterationManager:
 
         # 确保有初始文件
         if iter_num == 1:
-            # 复制初始 NEP 模型和训练数据
-            nep_src = Path(self.config.global_config.initial_nep_model)
-            train_src = Path(self.config.global_config.initial_train_data)
+            # 检查 nep.txt 是否已存在（可能由 initialize 阶段生成）
+            nep_dst = iter_dir / "nep.txt"
+            if not nep_dst.exists():
+                if self.config.global_config.initial_nep_model:
+                    shutil.copy2(self.config.global_config.initial_nep_model, nep_dst)
+                    self.logger.info(
+                        f"复制初始 NEP 模型: {self.config.global_config.initial_nep_model}"
+                    )
+                else:
+                    self.logger.warning("未找到 nep.txt 且未配置 initial_nep_model")
 
-            if nep_src.exists():
-                shutil.copy2(nep_src, iter_dir / "nep.txt")
-                self.logger.info(f"复制初始 NEP 模型: {nep_src.name}")
-
-            if train_src.exists():
-                shutil.copy2(train_src, iter_dir / "train.xyz")
-                self.logger.info(f"复制初始训练数据: {train_src.name}")
+            # 检查 train.xyz 是否已存在
+            train_dst = iter_dir / "train.xyz"
+            if not train_dst.exists():
+                if self.config.global_config.initial_train_data:
+                    shutil.copy2(
+                        self.config.global_config.initial_train_data, train_dst
+                    )
+                    self.logger.info(
+                        f"复制初始训练数据: {self.config.global_config.initial_train_data}"
+                    )
+                else:
+                    # 冷启动模式允许 train.xyz 不存在（或为空）
+                    pass
 
         # 步骤 1: 冷启动 GPUMD 探索
         if not self.run_bootstrap_gpumd(iter_num):
