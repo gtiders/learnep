@@ -128,14 +128,32 @@ def initialize_workspace(config: Config, logger: logging.Logger) -> None:
             config, logger, wait_for_completion=True
         )
 
-        # 复制训练好的模型到 iter_1
-        shutil.copy2(nep_model_path, nep_dst)
-        logger.info(f"  复制训练好的 NEP 模型: {nep_model_path} -> {nep_dst}")
+        # 确保 iter_1 目录存在（防止意外删除）
+        if not iter0_dir.exists():
+            logger.warning(f"目录 {iter0_dir} 不存在，重新创建")
+            iter0_dir.mkdir(parents=True, exist_ok=True)
 
-        shutil.copy2(nep_restart_path, nep_restart_dst)
-        logger.info(
-            f"  复制训练好的 NEP restart: {nep_restart_path} -> {nep_restart_dst}"
-        )
+        # 检查源文件
+        if not nep_model_path.exists():
+            logger.error(f"源文件不存在: {nep_model_path}")
+            raise FileNotFoundError(f"源文件不存在: {nep_model_path}")
+
+        # 复制训练好的模型到 iter_1
+        try:
+            shutil.copy2(nep_model_path, nep_dst)
+            logger.info(f"  复制训练好的 NEP 模型: {nep_model_path} -> {nep_dst}")
+        except Exception as e:
+            logger.error(f"复制 nep.txt 失败: {e}")
+            raise
+
+        try:
+            shutil.copy2(nep_restart_path, nep_restart_dst)
+            logger.info(
+                f"  复制训练好的 NEP restart: {nep_restart_path} -> {nep_restart_dst}"
+            )
+        except Exception as e:
+            logger.error(f"复制 nep.restart 失败: {e}")
+            raise
 
         # 复制训练数据
         if config.global_config.initial_train_data:

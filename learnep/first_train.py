@@ -177,11 +177,6 @@ def first_train(
             logger.info("  ✓ 检测到 DONE 文件，训练完成")
             break
 
-        # 检查输出文件是否生成
-        if nep_txt.exists() and nep_restart.exists():
-            logger.info("  ✓ nep.txt 和 nep.restart 已生成")
-            break
-
         # 显示进度
         hours, remainder = divmod(int(elapsed), 3600)
         minutes, seconds = divmod(remainder, 60)
