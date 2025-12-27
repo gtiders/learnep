@@ -72,20 +72,30 @@ def initialize_workspace(config: Config, logger: logging.Logger) -> None:
     """
     初始化工作空间
 
-    第 0 步 (Iteration 1)：
-    1. 复制初始 nep.txt 和 train.xyz 到工作目录
-    2. 使用 select_active_set() 生成活跃集
-    3. 创建 GPUMD 探索任务目录
+    支持三种初始化模式：
+    1. FULL: 有 NEP + 训练数据 → 正常初始化
+    2. NO_DATA: 有 NEP，无训练数据 → 冷启动（创建空 train.xyz）
+    3. NO_MODEL: 无 NEP，有训练数据 → 先训练 NEP
 
     参数:
         config: 配置对象
         logger: 日志记录器
     """
+    from .config import detect_init_mode, InitMode
+
     work_dir = config.global_config.work_dir
+    init_mode = detect_init_mode(config)
 
     logger.info("=" * 80)
     logger.info("开始初始化工作空间（Iteration 1）")
     logger.info("=" * 80)
+
+    mode_desc = {
+        InitMode.FULL: "完整模式（有 NEP + 训练数据）",
+        InitMode.NO_DATA: "无数据模式（有 NEP，使用冷启动）",
+        InitMode.NO_MODEL: "无模型模式（需要先训练 NEP）",
+    }
+    logger.info(f"\n检测到初始化模式: {mode_desc.get(init_mode, '未知')}")
 
     # =========================================================================
     # 步骤 1: 创建工作目录结构
@@ -98,34 +108,59 @@ def initialize_workspace(config: Config, logger: logging.Logger) -> None:
     logger.info(f"  创建目录: {iter0_dir}")
 
     # =========================================================================
-    # 步骤 2: 复制初始文件
+    # 步骤 2: 复制初始文件（根据模式）
     # =========================================================================
     logger.info("\n步骤 2: 复制初始文件")
 
-    # 复制 nep.txt
+    # 根据模式处理 NEP 文件
     nep_dst = iter0_dir / "nep.txt"
-    shutil.copy2(config.global_config.initial_nep_model, nep_dst)
-    logger.info(
-        f"  复制 NEP 模型: {config.global_config.initial_nep_model} -> {nep_dst}"
-    )
-
-    # 复制 nep.restart
     nep_restart_dst = iter0_dir / "nep.restart"
-    shutil.copy2(config.global_config.initial_nep_restart, nep_restart_dst)
-    logger.info(
-        f"  复制 NEP restart: {config.global_config.initial_nep_restart} -> {nep_restart_dst}"
-    )
-
-    # 复制 train.xyz
     train_dst = iter0_dir / "train.xyz"
-    shutil.copy2(config.global_config.initial_train_data, train_dst)
-    logger.info(
-        f"  复制训练数据: {config.global_config.initial_train_data} -> {train_dst}"
-    )
 
-    # 统计训练数据
-    train_structures = read_trajectory(str(train_dst))
-    logger.info(f"  训练集包含 {len(train_structures)} 个结构")
+    if init_mode == InitMode.NO_MODEL:
+        # 无模型模式：需要先训练
+        logger.info("  无 NEP 模型，需要先运行 first_train")
+        logger.info("")
+        logger.info("=" * 80)
+        logger.info("请先运行以下命令训练初始 NEP 模型:")
+        logger.info("  learnep-first-train config.yaml")
+        logger.info("")
+        logger.info("训练完成后再次运行 learnep 开始主动学习")
+        logger.info("=" * 80)
+        raise RuntimeError("需要先训练 NEP 模型，请运行 learnep-first-train")
+
+    # FULL 或 NO_DATA 模式：复制 NEP 文件
+    if config.global_config.initial_nep_model:
+        shutil.copy2(config.global_config.initial_nep_model, nep_dst)
+        logger.info(
+            f"  复制 NEP 模型: {config.global_config.initial_nep_model} -> {nep_dst}"
+        )
+    else:
+        raise RuntimeError("未找到 NEP 模型文件")
+
+    if config.global_config.initial_nep_restart:
+        shutil.copy2(config.global_config.initial_nep_restart, nep_restart_dst)
+        logger.info(
+            f"  复制 NEP restart: {config.global_config.initial_nep_restart} -> {nep_restart_dst}"
+        )
+    else:
+        raise RuntimeError("未找到 NEP restart 文件")
+
+    # 处理训练数据
+    if init_mode == InitMode.FULL:
+        # 完整模式：复制训练数据
+        shutil.copy2(config.global_config.initial_train_data, train_dst)
+        logger.info(
+            f"  复制训练数据: {config.global_config.initial_train_data} -> {train_dst}"
+        )
+        train_structures = read_trajectory(str(train_dst))
+        logger.info(f"  训练集包含 {len(train_structures)} 个结构")
+    else:
+        # NO_DATA 模式：创建空的 train.xyz
+        train_dst.touch()
+        logger.info(f"  创建空的训练数据文件: {train_dst}")
+        logger.info("  训练集包含 0 个结构（将使用冷启动模式）")
+        train_structures = []
 
     # =========================================================================
     # 步骤 3: 生成活跃集

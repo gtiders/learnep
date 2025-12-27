@@ -29,13 +29,27 @@ global:
   log_file: "active_learning.log"   # 日志文件路径
 
   # ---------------------------------------------------------------------------
-  # 初始文件（必须提供）
+  # 初始文件（灵活配置，支持三种模式）
   # ---------------------------------------------------------------------------
-  # 如果没有初始模型，可使用 learnep-first-train 命令从头训练
+  # 
+  # 模式 1: 完整模式 - 提供 NEP + 训练数据（正常启动）
+  #   initial_nep_model: "nep.txt"
+  #   initial_nep_restart: "nep.restart"
+  #   initial_train_data: "train.xyz"
+  #
+  # 模式 2: 无数据模式 - 仅提供 NEP（冷启动）
+  #   initial_nep_model: "nep.txt"
+  #   initial_nep_restart: "nep.restart"
+  #   initial_train_data: ""  # 留空或注释掉
+  #
+  # 模式 3: 无模型模式 - 仅提供训练数据（需先运行 learnep-first-train）
+  #   initial_nep_model: ""  # 留空
+  #   initial_nep_restart: ""  # 留空
+  #   initial_train_data: "train.xyz"
   
-  initial_nep_model: "nep.txt"      # 初始 NEP 势函数文件
-  initial_nep_restart: "nep.restart"  # 初始 NEP 重启文件（用于继续训练）
-  initial_train_data: "train.xyz"   # 初始训练数据（需包含能量、力、应力）
+  initial_nep_model: "nep.txt"        # 初始 NEP 势函数文件（可选）
+  initial_nep_restart: "nep.restart"  # 初始 NEP 重启文件（可选）
+  initial_train_data: "train.xyz"     # 初始训练数据（可选，空文件触发冷启动）
 
   # ---------------------------------------------------------------------------
   # 作业调度系统配置

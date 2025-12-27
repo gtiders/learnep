@@ -6,10 +6,19 @@
 
 import re
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import yaml
+
+
+class InitMode(Enum):
+    """初始化模式"""
+
+    FULL = "full"  # 完整模式：有 NEP + 训练数据
+    NO_DATA = "no_data"  # 无数据模式：有 NEP，无训练数据（冷启动）
+    NO_MODEL = "no_model"  # 无模型模式：无 NEP，有训练数据（需要先训练）
 
 
 @dataclass
@@ -20,9 +29,9 @@ class GlobalConfig:
     max_iterations: int
     max_structures_per_iteration: int
     log_file: Path
-    initial_nep_model: Path
-    initial_nep_restart: Path
-    initial_train_data: Path
+    initial_nep_model: Optional[Path]  # 可选：初始 NEP 模型
+    initial_nep_restart: Optional[Path]  # 可选：初始 NEP restart
+    initial_train_data: Optional[Path]  # 可选：初始训练数据
     submit_command: str
     check_interval: int
     scheduler_type: str  # 调度系统类型: "pbs", "slurm", "lsf", "auto"
@@ -198,23 +207,31 @@ def load_config(config_file: str) -> Config:
     log_file = _resolve_path(
         global_raw.get("log_file", "active_learning.log"), work_dir
     )
-    initial_nep_model = _resolve_path(
-        global_raw.get("initial_nep_model", "nep.txt"), work_dir
-    )
-    initial_nep_restart = _resolve_path(
-        global_raw.get("initial_nep_restart", "nep.restart"), work_dir
-    )
-    initial_train_data = _resolve_path(
-        global_raw.get("initial_train_data", "train.xyz"), work_dir
-    )
 
-    # 验证初始文件是否存在
-    if not initial_nep_model.exists():
-        raise FileNotFoundError(f"初始 NEP 模型文件不存在: {initial_nep_model}")
-    if not initial_nep_restart.exists():
-        raise FileNotFoundError(f"初始 NEP restart 文件不存在: {initial_nep_restart}")
-    if not initial_train_data.exists():
-        raise FileNotFoundError(f"初始训练数据文件不存在: {initial_train_data}")
+    # 解析初始文件路径（可选，如果为空字符串或不存在则为 None）
+    def _resolve_optional_path(raw_value: str, base: Path) -> Optional[Path]:
+        """解析可选路径，若为空或文件不存在则返回 None"""
+        if not raw_value or raw_value.strip() == "":
+            return None
+        path = _resolve_path(raw_value, base)
+        return path if path.exists() else None
+
+    initial_nep_model = _resolve_optional_path(
+        global_raw.get("initial_nep_model", ""), work_dir
+    )
+    initial_nep_restart = _resolve_optional_path(
+        global_raw.get("initial_nep_restart", ""), work_dir
+    )
+    initial_train_data_raw = global_raw.get("initial_train_data", "")
+
+    # 训练数据特殊处理：检查文件是否存在且非空
+    initial_train_data: Optional[Path] = None
+    if initial_train_data_raw and initial_train_data_raw.strip():
+        train_path = _resolve_path(initial_train_data_raw, work_dir)
+        if train_path.exists():
+            # 检查文件是否为空
+            if train_path.stat().st_size > 0:
+                initial_train_data = train_path
 
     global_config = GlobalConfig(
         work_dir=work_dir,
@@ -357,6 +374,39 @@ def load_config(config_file: str) -> Config:
     )
 
 
+def detect_init_mode(config: Config) -> InitMode:
+    """
+    检测初始化模式
+
+    根据初始文件的存在情况判断应使用哪种模式：
+    - FULL: 有 NEP 模型 + 训练数据 → 正常流程
+    - NO_DATA: 有 NEP 模型，无训练数据 → 冷启动
+    - NO_MODEL: 无 NEP 模型，有训练数据 → 先训练
+
+    参数:
+        config: 配置对象
+
+    返回:
+        InitMode 枚举值
+    """
+    has_nep = config.global_config.initial_nep_model is not None
+    has_restart = config.global_config.initial_nep_restart is not None
+    has_data = config.global_config.initial_train_data is not None
+
+    if has_nep and has_restart and has_data:
+        return InitMode.FULL
+    elif has_nep and has_restart and not has_data:
+        return InitMode.NO_DATA
+    elif not has_nep and has_data:
+        return InitMode.NO_MODEL
+    elif has_nep and has_restart:
+        # 有 NEP 但没有训练数据
+        return InitMode.NO_DATA
+    else:
+        # 什么都没有，默认需要先训练
+        return InitMode.NO_MODEL
+
+
 def print_config_summary(config: Config) -> None:
     """
     打印配置摘要（用于调试和确认）
@@ -368,14 +418,23 @@ def print_config_summary(config: Config) -> None:
     print("配置摘要")
     print("=" * 80)
 
+    # 检测初始化模式
+    init_mode = detect_init_mode(config)
+    mode_desc = {
+        InitMode.FULL: "完整模式（有 NEP + 训练数据）",
+        InitMode.NO_DATA: "无数据模式（有 NEP，使用冷启动）",
+        InitMode.NO_MODEL: "无模型模式（需要先训练 NEP）",
+    }
+
     print("\n[全局配置]")
     print(f"  工作目录: {config.global_config.work_dir}")
     print(f"  最大迭代次数: {config.global_config.max_iterations}")
     print(f"  每轮最大结构数: {config.global_config.max_structures_per_iteration}")
     print(f"  日志文件: {config.global_config.log_file}")
-    print(f"  初始 NEP 模型: {config.global_config.initial_nep_model}")
-    print(f"  初始 NEP restart: {config.global_config.initial_nep_restart}")
-    print(f"  初始训练数据: {config.global_config.initial_train_data}")
+    print(f"  初始化模式: {mode_desc.get(init_mode, '未知')}")
+    print(f"  初始 NEP 模型: {config.global_config.initial_nep_model or '未设置'}")
+    print(f"  初始 NEP restart: {config.global_config.initial_nep_restart or '未设置'}")
+    print(f"  初始训练数据: {config.global_config.initial_train_data or '未设置'}")
     print(f"  任务提交命令: {config.global_config.submit_command}")
 
     print("\n[VASP 配置]")
