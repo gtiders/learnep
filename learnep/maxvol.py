@@ -141,6 +141,7 @@ def filter_reasonable_structures(
     min_distance: float = 1.0,
     max_force: float = 50.0,
     max_energy_deviation: float = 5.0,
+    skip_force_check: bool = False,
     show_progress: bool = True,
 ) -> list[Atoms]:
     """
@@ -150,7 +151,7 @@ def filter_reasonable_structures(
 
     过滤条件：
     1. 原子重叠：任意两原子距离 < min_distance
-    2. 力过大：任意原子受力 > max_force
+    2. 力过大：任意原子受力 > max_force（可跳过）
     3. 能量异常：每原子能量偏离中位数 > max_energy_deviation
 
     参数:
@@ -159,6 +160,7 @@ def filter_reasonable_structures(
         min_distance: 最小原子间距（Å），小于此值视为原子重叠
         max_force: 最大原子力（eV/Å），大于此值视为不合理
         max_energy_deviation: 最大每原子能量偏差（eV），相对于中位数
+        skip_force_check: 跳过力检测（冷启动模式下 NEP 不可靠时使用）
         show_progress: 是否显示进度条
 
     返回:
@@ -214,16 +216,24 @@ def filter_reasonable_structures(
             continue
 
         # 检查2：力过大
-        try:
-            atoms.calc = calc
-            forces = atoms.get_forces()
-            max_f = np.linalg.norm(forces, axis=1).max()
-            if max_f > max_force:
-                rejected["force"] += 1
+        # 如果 skip_force_check=True，跳过此检测（冷启动模式下 NEP 不可靠）
+        if not skip_force_check:
+            try:
+                # 先尝试获取文件中已有的力（不设置计算器）
+                try:
+                    forces = atoms.get_forces()
+                except RuntimeError:
+                    # 文件中没有力，使用 NEP 计算
+                    atoms.calc = calc
+                    forces = atoms.get_forces()
+
+                max_f = np.linalg.norm(forces, axis=1).max()
+                if max_f > max_force:
+                    rejected["force"] += 1
+                    continue
+            except Exception:
+                rejected["error"] += 1
                 continue
-        except Exception:
-            rejected["error"] += 1
-            continue
 
         # 检查3：能量异常
         e_per_atom = energies_per_atom[i]
@@ -233,9 +243,10 @@ def filter_reasonable_structures(
 
         reasonable.append(atoms)
 
+    force_msg = "(已跳过)" if skip_force_check else ""
     print(f"过滤结果: {len(reasonable)}/{len(structures)} 个结构通过")
     print(
-        f"  拒绝原因: 原子重叠={rejected['overlap']}, 力过大={rejected['force']}, "
+        f"  拒绝原因: 原子重叠={rejected['overlap']}, 力过大={rejected['force']}{force_msg}, "
         f"能量异常={rejected['energy']}, 计算错误={rejected['error']}"
     )
 

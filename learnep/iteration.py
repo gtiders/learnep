@@ -723,6 +723,7 @@ class IterationManager:
             min_distance=self.config.bootstrap.filter.min_distance,
             max_force=self.config.bootstrap.filter.max_force,
             max_energy_deviation=self.config.bootstrap.filter.max_energy_per_atom,
+            skip_force_check=True,  # 冷启动模式下 NEP 不可靠，跳过力检测
             show_progress=False,
         )
         self.logger.info(f"过滤后剩余 {len(reasonable)} 个合理结构")
@@ -1372,8 +1373,12 @@ class IterationManager:
         selected = self.select_bootstrap_structures(iter_num)
 
         if len(selected) == 0:
-            self.logger.warning("冷启动未选中任何结构，请检查配置")
-            return False
+            self.logger.warning("冷启动本轮未选中任何结构")
+            self.logger.info("将继续下一轮迭代...")
+            self.logger.info("\n" + "=" * 80)
+            self.logger.info(f"迭代 {iter_num} 完成（冷启动模式，无新结构）")
+            self.logger.info("=" * 80)
+            return True  # 继续下一轮而不是退出
 
         # 保存待标注结构
         to_add_file = iter_dir / "to_add.xyz"
