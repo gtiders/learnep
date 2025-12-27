@@ -117,9 +117,11 @@ def check_data_sufficient(
             if symbol in element_counts:
                 element_counts[symbol] += 1
 
-    # 获取描述符维度（通过计算一个结构的描述符）
-    desc = calc.get_property("descriptor", trajectory[0])
-    descriptor_dim = desc.shape[1]
+    # 获取 B_projection 的维度（这是 MaxVol 使用的描述符维度）
+    # 注意：B_projection 的维度（~960）远大于 descriptor（~30）
+    calc.calculate(trajectory[0], ["B_projection"])
+    B_proj = calc.results["B_projection"]
+    descriptor_dim = B_proj.shape[1]
 
     # 检查每种元素
     stats: dict[str, tuple[int, int]] = {}
