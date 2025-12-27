@@ -117,8 +117,8 @@ def check_data_sufficient(
             if symbol in element_counts:
                 element_counts[symbol] += 1
 
-    # 获取 B_projection 的维度（这是 MaxVol 使用的描述符维度）
-    # 注意：B_projection 的维度（~960）远大于 descriptor（~30）
+    # 获取 B_projection 的维度（这是 MaxVol 使用的 Linearized Basis 维度）
+    # 注意：B_projection 的维度（~960）远大于 NEP descriptor（~30）
     calc.calculate(trajectory[0], ["B_projection"])
     B_proj = calc.results["B_projection"]
     descriptor_dim = B_proj.shape[1]
@@ -437,10 +437,11 @@ def compute_descriptor_projection(
     show_progress: bool = True,
 ) -> DescriptorProjectionResult:
     """
-    计算轨迹中所有原子的 NEP 描述符投影 (B_projection)。
+    计算轨迹中所有原子的 B_projection (Linearized Basis)。
 
-    描述符投影是 NEP 势函数中每个原子局部环境的低维表示，
-    用于评估模型的外推程度。
+    B_projection 是 NEP 势函数的线性化基组表示（高维，~960），
+    主要用于 MaxVol 算法评估模型的外推程度。请勿与神经网络的
+    输入描述符（低维，~30）混淆。
 
     参数:
         trajectory: ASE Atoms 对象列表
@@ -1205,23 +1206,27 @@ def prune_training_set_maxvol(
 
     print(f"\n执行训练集修剪 (MaxVol): {len(structures)} → {max_structures}")
 
-    # 计算结构级别的平均描述符
+    # 计算结构级别的平均 B_projection (Linearized Basis)
+    # MaxVol 算法必须在 linearized basis space (960维) 中工作
     calc = NEP(str(nep_file))
-    descriptors = []
+    b_projections = []
 
-    iterator = tqdm(structures, desc="计算描述符") if show_progress else structures
+    iterator = (
+        tqdm(structures, desc="计算 B_projection") if show_progress else structures
+    )
 
     for structure in iterator:
-        desc = calc.get_property("descriptor", structure)
-        # 对每个结构求平均描述符
-        descriptors.append(np.mean(desc, axis=0))
+        calc.calculate(structure, ["B_projection"])
+        b_proj = calc.results["B_projection"]
+        # 对每个结构求平均 B_projection
+        b_projections.append(np.mean(b_proj, axis=0))
 
-    descriptors_array = np.array(descriptors)  # shape: (n_structures, descriptor_dim)
-    n, d = descriptors_array.shape
+    b_proj_array = np.array(b_projections)  # shape: (n_structures, basis_dim)
+    n, d = b_proj_array.shape
 
-    print(f"描述符矩阵形状: {descriptors_array.shape}")
+    print(f"MaxVol 基组矩阵形状: {b_proj_array.shape}")
     print(f"  结构数: {n}")
-    print(f"  描述符维度: {d}")
+    print(f"  基组维度 (B_projection): {d}")
 
     # 检查是否满足 MaxVol 要求
     if n < d:
@@ -1237,9 +1242,7 @@ def prune_training_set_maxvol(
 
     try:
         # 使用内部的 MaxVol 核心算法
-        selected_indices = _maxvol_core(
-            descriptors_array, gamma_tol=1.001, max_iter=1000
-        )
+        selected_indices = _maxvol_core(b_proj_array, gamma_tol=1.001, max_iter=1000)
 
         # selected_indices 长度为 d，我们需要从中选择 target_count 个
         if len(selected_indices) > target_count:
@@ -1417,7 +1420,8 @@ def select_candidates_fps(
 
     print(f"\n使用 FPS 选择候选结构: {len(candidate_trajectory)} → 目标 {max_count}")
 
-    # 计算描述符（结构级别平均）
+    # 计算 NEP 描述符 (低维, ~30)
+    # FPS 基于欧几里得距离，使用 compact descriptor 是合适的
     calc = NEP(str(nep_file))
 
     descriptors = []
@@ -1433,7 +1437,7 @@ def select_candidates_fps(
         descriptors.append(np.mean(desc, axis=0))
 
     descriptors_array = np.array(descriptors)
-    print(f"描述符形状: {descriptors_array.shape}")
+    print(f"NEP 描述符形状: {descriptors_array.shape}")
 
     # 自动调整 min_distance 以满足 max_count 约束
     min_distance = initial_min_distance

@@ -192,8 +192,9 @@ nep:
 
   # 训练集修剪（当结构过多时使用 MaxVol 精简）
   prune_train_set: true        # 是否启用修剪
-  max_structures_factor: 1.0   # 最大结构数 = 描述符维度 × 此系数
-                               # 例如：描述符100维 × 1.0 = 最多100个结构
+  max_structures_factor: 1.0   # 最大结构数 = MaxVol Linearized Basis Dimension (B_projection, ~960) × 此系数
+                               # 注意：不是基于 NEP 输入描述符维度 (~30)
+                               # 例如：基组维度960 × 1.0 = 最多960个结构
 
 
 # #############################################################################
