@@ -1054,14 +1054,18 @@ class IterationManager:
                     from pynep.calculate import NEP
 
                     temp_calc = NEP(str(nep_for_check))
-                    # 计算一个小结构的描述符来获取维度
+                    # 计算一个小结构的 B_projection 来获取 MaxVol 需要的维度
+                    # 注意：千万不要使用 get_property("descriptor")，那个是 NEP 网络的输入特征维度（~30）
+                    # MaxVol 算法是在线性化基组空间（B_projection）中工作的，维度通常很大（~960）
                     test_structures = read_trajectory(str(train_file))
                     if len(test_structures) > 0:
-                        test_desc = temp_calc.get_property(
-                            "descriptor", test_structures[0]
+                        temp_calc.calculate(test_structures[0], ["B_projection"])
+                        b_proj = temp_calc.results["B_projection"]
+                        descriptor_dim = b_proj.shape[1]
+
+                        self.logger.info(
+                            f"  MaxVol 基组维度 (B_projection): {descriptor_dim}"
                         )
-                        descriptor_dim = test_desc.shape[1]
-                        self.logger.info(f"  描述符维度: {descriptor_dim}")
 
                         # 计算最大允许的结构数
                         max_structures = int(
