@@ -707,9 +707,18 @@ class IterationManager:
             self.logger.warning("过滤后没有合理结构，请检查过滤参数")
             return []
 
-        # FPS 选择
+        # FPS 选择（如果超过上限）
         max_structures = self.config.global_config.max_structures_per_iteration
-        self.logger.info(f"\nFPS 选择（目标: {max_structures} 个结构）...")
+
+        if len(reasonable) <= max_structures:
+            self.logger.info(
+                f"合理结构数 ({len(reasonable)}) <= 上限 ({max_structures})，无需 FPS 筛选"
+            )
+            return reasonable
+
+        self.logger.info(
+            f"\nFPS 筛选（{len(reasonable)} → 最多 {max_structures} 个）..."
+        )
 
         from .maxvol import apply_fps_filter
 
@@ -798,7 +807,7 @@ class IterationManager:
 
         else:
             # MaxVol 模式（默认）：直接选择最有价值的结构
-            self.logger.info(f"\n使用 MaxVol 模式（目标: {max_structures} 个结构）...")
+            self.logger.info(f"\n使用 MaxVol 模式（上限: {max_structures} 个结构）...")
 
             from .maxvol import select_structures_maxvol
 
