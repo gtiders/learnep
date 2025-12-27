@@ -33,9 +33,7 @@ class GlobalConfig:
 class VaspConfig:
     """VASP 配置"""
 
-    incar_file: Path
-    potcar_file: Path
-    kpoints_file: Path
+    input_files: List[Path]  # 输入文件列表（INCAR, POTCAR, KPOINTS 等）
     job_script: str
     timeout: int
 
@@ -234,25 +232,21 @@ def load_config(config_file: str) -> Config:
 
     # 解析 VASP 配置
     vasp_raw = raw_config.get("vasp", {})
+
+    # 解析输入文件列表
+    input_files_raw = vasp_raw.get("input_files", [])
+    input_files = [_resolve_path(f, work_dir) for f in input_files_raw]
+
     vasp_config = VaspConfig(
-        incar_file=_resolve_path(vasp_raw.get("incar_file", "input/INCAR"), work_dir),
-        potcar_file=_resolve_path(
-            vasp_raw.get("potcar_file", "input/POTCAR"), work_dir
-        ),
-        kpoints_file=_resolve_path(
-            vasp_raw.get("kpoints_file", "input/KPOINTS"), work_dir
-        ),
+        input_files=input_files,
         job_script=vasp_raw.get("job_script", ""),
         timeout=vasp_raw.get("timeout", 172800),
     )
 
     # 验证 VASP 输入文件是否存在
-    if not vasp_config.incar_file.exists():
-        raise FileNotFoundError(f"VASP INCAR 文件不存在: {vasp_config.incar_file}")
-    if not vasp_config.potcar_file.exists():
-        raise FileNotFoundError(f"VASP POTCAR 文件不存在: {vasp_config.potcar_file}")
-    if not vasp_config.kpoints_file.exists():
-        raise FileNotFoundError(f"VASP KPOINTS 文件不存在: {vasp_config.kpoints_file}")
+    for input_file in vasp_config.input_files:
+        if not input_file.exists():
+            raise FileNotFoundError(f"VASP 输入文件不存在: {input_file}")
 
     # 解析 NEP 配置
     nep_raw = raw_config.get("nep", {})
@@ -385,9 +379,9 @@ def print_config_summary(config: Config) -> None:
     print(f"  任务提交命令: {config.global_config.submit_command}")
 
     print("\n[VASP 配置]")
-    print(f"  INCAR: {config.vasp.incar_file}")
-    print(f"  POTCAR: {config.vasp.potcar_file}")
-    print(f"  KPOINTS: {config.vasp.kpoints_file}")
+    print(f"  输入文件数量: {len(config.vasp.input_files)}")
+    for f in config.vasp.input_files:
+        print(f"    - {f.name}")
     print(f"  超时时间: {config.vasp.timeout} 秒")
 
     print("\n[NEP 配置]")

@@ -64,12 +64,18 @@ global:
 
 vasp:
   # ---------------------------------------------------------------------------
-  # 输入文件
+  # 输入文件列表
   # ---------------------------------------------------------------------------
+  # 灵活指定需要复制到任务目录的文件
+  # 文件名会保持不变（例如 input/INCAR 复制后仍为 INCAR）
+  # 程序会自动生成 POSCAR
   
-  incar_file: "input/INCAR"         # INCAR 文件路径
-  potcar_file: "input/POTCAR"       # POTCAR 文件路径
-  kpoints_file: "input/KPOINTS"     # KPOINTS 文件路径
+  input_files:
+    - "input/INCAR"       # INCAR 文件
+    - "input/POTCAR"      # POTCAR 文件
+    - "input/KPOINTS"     # KPOINTS 文件（如果不需要可删除）
+    # - "input/WAVECAR"   # 可选：WAVECAR 文件
+    # - "input/CHGCAR"    # 可选：CHGCAR 文件
 
   # ---------------------------------------------------------------------------
   # 作业脚本

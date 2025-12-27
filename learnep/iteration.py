@@ -858,9 +858,8 @@ class IterationManager:
             ase_write(str(task_dir / "POSCAR"), structure, format="vasp", direct=True)
 
             # 复制输入文件
-            shutil.copy2(self.config.vasp.incar_file, task_dir / "INCAR")
-            shutil.copy2(self.config.vasp.potcar_file, task_dir / "POTCAR")
-            shutil.copy2(self.config.vasp.kpoints_file, task_dir / "KPOINTS")
+            for input_file in self.config.vasp.input_files:
+                shutil.copy2(input_file, task_dir / input_file.name)
 
             # 写入作业脚本（自动添加 DONE 标记）
             with open(task_dir / "job.sh", "w") as f:
