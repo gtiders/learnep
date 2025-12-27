@@ -314,35 +314,59 @@ class IterationManager:
         返回:
             是否需要冷启动模式
         """
+        # 检查是否启用冷启动
         if not self.config.bootstrap.enabled:
+            self.logger.info("冷启动模式已禁用 (bootstrap.enabled=false)")
+            return False
+
+        # 检查是否有冷启动条件配置
+        if not self.config.bootstrap.conditions:
+            self.logger.warning("未配置冷启动条件 (bootstrap.conditions 为空)")
+            self.logger.warning("即使数据不足也无法使用冷启动模式")
             return False
 
         train_file = iter_dir / "train.xyz"
         nep_file = iter_dir / "nep.txt"
 
-        if not train_file.exists() or not nep_file.exists():
-            return True  # 文件不存在，需要冷启动
+        # 检查文件是否存在
+        if not train_file.exists():
+            self.logger.info(f"训练文件不存在: {train_file}")
+            self.logger.info("将使用冷启动模式")
+            return True
 
+        if not nep_file.exists():
+            self.logger.info(f"NEP 文件不存在: {nep_file}")
+            self.logger.info("将使用冷启动模式")
+            return True
+
+        # 检查数据是否足够
         try:
             from .maxvol import check_data_sufficient, read_trajectory
 
             train_structures = read_trajectory(str(train_file))
+            self.logger.info(f"检测训练数据充足性: {len(train_structures)} 个结构")
+
             is_sufficient, stats = check_data_sufficient(
                 train_structures, str(nep_file)
             )
 
-            if not is_sufficient:
-                self.logger.info("\n检测到训练数据不足，将使用冷启动模式")
-                for elem, (count, dim) in stats.items():
-                    status = "✓" if count >= dim else "✗"
-                    self.logger.info(f"  {status} 元素 {elem}: {count}/{dim} 原子环境")
-                return True
+            # 打印统计信息
+            self.logger.info("各元素原子环境数量 vs 描述符维度:")
+            for elem, (count, dim) in stats.items():
+                status = "✓" if count >= dim else "✗"
+                self.logger.info(f"  {status} 元素 {elem}: {count}/{dim}")
 
-            return False
+            if not is_sufficient:
+                self.logger.info("训练数据不足，将使用冷启动模式")
+                return True
+            else:
+                self.logger.info("训练数据充足，将使用正常模式")
+                return False
 
         except Exception as e:
             self.logger.warning(f"检测数据充足性时出错: {e}")
-            return True  # 出错时假设需要冷启动
+            self.logger.info("出错时默认使用冷启动模式")
+            return True
 
     def validate_bootstrap_config(self) -> bool:
         """
