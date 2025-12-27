@@ -617,11 +617,20 @@ class IterationManager:
             nep_src = iter_dir / "nep.txt"
             if nep_src.exists():
                 shutil.copy2(nep_src, cond_dir / "nep.txt")
-            else:
+            elif self.config.global_config.initial_nep_model:
                 # 从初始模型复制
                 shutil.copy2(
                     self.config.global_config.initial_nep_model, cond_dir / "nep.txt"
                 )
+            else:
+                # 尝试从 first_train 目录查找（NO_MODEL 模式的后备）
+                first_train_nep = self.work_dir / "first_train" / "nep.txt"
+                if first_train_nep.exists():
+                    shutil.copy2(first_train_nep, cond_dir / "nep.txt")
+                    self.logger.info("  从 first_train 目录获取 nep.txt")
+                else:
+                    self.logger.error("未找到 nep.txt，冷启动无法进行")
+                    raise FileNotFoundError("nep.txt 未找到")
 
             # 写入 run.in
             with open(cond_dir / "run.in", "w") as f:
