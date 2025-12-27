@@ -233,3 +233,56 @@ selection:
   # FPS (最远点采样) 参数（仅 method="maxvol_fps" 时使用）
   fps_min_distance: 0.01     # 初始最小距离阈值
 
+# =============================================================================
+# 冷启动模式配置（初始数据不足时自动启用）
+# =============================================================================
+# 当训练数据不足以运行 MaxVol 算法时（任一元素的原子数 < 描述符维度），
+# 系统会自动切换到冷启动模式。冷启动模式使用 dump_exyz 保存轨迹，
+# 然后通过结构过滤和 FPS 选择来积累训练数据。
+
+bootstrap:
+  # 是否启用冷启动模式（自动检测）
+  enabled: true
+  
+  # 冷启动条件配置
+  # 注意：run_in 中必须包含 dump_exyz 命令，不应使用 compute_extrapolation
+  conditions:
+    - id: "bootstrap_300K"
+      structure_file: "structure.xyz"  # 初始结构文件
+      run_in: |
+        potential nep.txt
+        velocity 300
+        time_step 1
+        ensemble npt_scr 300 300 100 0 0 0 100
+        # 每 100 步保存一个结构（冷启动必须使用 dump_exyz）
+        dump_exyz 100 1 1
+        run 10000
+    
+    - id: "bootstrap_600K"
+      structure_file: "structure.xyz"
+      run_in: |
+        potential nep.txt
+        velocity 600
+        time_step 1
+        ensemble npt_scr 600 600 100 0 0 0 100
+        dump_exyz 100 1 1
+        run 10000
+  
+  # 冷启动作业脚本
+  job_script: |
+    #!/bin/bash
+    #PBS -N bootstrap
+    #PBS -l nodes=1:ppn=1:gpus=1
+    #PBS -q gpu
+    cd $PBS_O_WORKDIR
+    gpumd
+  
+  # 结构合理性过滤参数
+  # 在 FPS 选择前，先过滤掉不合理的结构
+  filter:
+    min_distance: 1.0        # 最小原子间距（Å），小于此值视为原子重叠
+    max_force: 50.0          # 最大原子力（eV/Å），大于此值视为不合理
+    max_energy_per_atom: 5.0 # 最大每原子能量偏差（eV），相对于中位数
+  
+  # 超时时间（秒）
+  timeout: 86400  # 24 hours

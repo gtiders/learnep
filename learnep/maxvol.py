@@ -74,6 +74,173 @@ class DescriptorProjectionResult:
 
 
 # =============================================================================
+# 冷启动模式辅助函数
+# =============================================================================
+
+
+def check_data_sufficient(
+    trajectory: list[Atoms],
+    nep_file: str | Path,
+) -> tuple[bool, dict[str, tuple[int, int]]]:
+    """
+    检查训练数据是否足够运行 MaxVol 算法。
+
+    对于每种元素，检查原子环境数量是否 >= 描述符维度。
+
+    参数:
+        trajectory: 训练集轨迹
+        nep_file: NEP 势函数文件路径
+
+    返回:
+        (是否足够, 各元素统计 {元素: (原子数, 描述符维度)})
+    """
+    if NEP is None:
+        raise ImportError("请先安装 PyNEP: pip install pynep")
+
+    if len(trajectory) == 0:
+        return False, {}
+
+    nep_file = Path(nep_file)
+    calc = NEP(str(nep_file))
+
+    # 解析元素列表
+    with open(nep_file) as f:
+        first_line = f.readline()
+        parts = first_line.split()
+        n_types = int(parts[1])
+        elements = parts[2 : 2 + n_types]
+
+    # 统计每种元素的原子数
+    element_counts: dict[str, int] = {elem: 0 for elem in elements}
+    for atoms in trajectory:
+        for symbol in atoms.get_chemical_symbols():
+            if symbol in element_counts:
+                element_counts[symbol] += 1
+
+    # 获取描述符维度（通过计算一个结构的描述符）
+    desc = calc.get_property("descriptor", trajectory[0])
+    descriptor_dim = desc.shape[1]
+
+    # 检查每种元素
+    stats: dict[str, tuple[int, int]] = {}
+    all_sufficient = True
+    for elem in elements:
+        count = element_counts[elem]
+        stats[elem] = (count, descriptor_dim)
+        if count < descriptor_dim:
+            all_sufficient = False
+
+    return all_sufficient, stats
+
+
+def filter_reasonable_structures(
+    structures: list[Atoms],
+    nep_file: str | Path,
+    min_distance: float = 1.0,
+    max_force: float = 50.0,
+    max_energy_deviation: float = 5.0,
+    show_progress: bool = True,
+) -> list[Atoms]:
+    """
+    过滤不合理的结构。
+
+    在进行 FPS 选择前，先过滤掉物理上不合理的结构。
+
+    过滤条件：
+    1. 原子重叠：任意两原子距离 < min_distance
+    2. 力过大：任意原子受力 > max_force
+    3. 能量异常：每原子能量偏离中位数 > max_energy_deviation
+
+    参数:
+        structures: 待过滤的结构列表
+        nep_file: NEP 势函数文件路径
+        min_distance: 最小原子间距（Å），小于此值视为原子重叠
+        max_force: 最大原子力（eV/Å），大于此值视为不合理
+        max_energy_deviation: 最大每原子能量偏差（eV），相对于中位数
+        show_progress: 是否显示进度条
+
+    返回:
+        过滤后的合理结构列表
+    """
+    if NEP is None:
+        raise ImportError("请先安装 PyNEP: pip install pynep")
+
+    if len(structures) == 0:
+        return []
+
+    calc = NEP(str(nep_file))
+
+    # 第一遍：计算所有结构的能量
+    print("计算结构能量...")
+    energies_per_atom = []
+    iterator = tqdm(structures, desc="计算能量") if show_progress else structures
+    for atoms in iterator:
+        try:
+            atoms.calc = calc
+            e = atoms.get_potential_energy() / len(atoms)
+            energies_per_atom.append(e)
+        except Exception:
+            energies_per_atom.append(float("inf"))
+
+    # 计算中位数能量（更鲁棒）
+    valid_energies = [e for e in energies_per_atom if e != float("inf")]
+    if valid_energies:
+        median_energy = float(np.median(valid_energies))
+    else:
+        median_energy = 0.0
+
+    # 第二遍：过滤
+    print(f"过滤不合理结构（中位能量: {median_energy:.3f} eV/atom）...")
+    reasonable = []
+    rejected = {"overlap": 0, "force": 0, "energy": 0, "error": 0}
+
+    iterator2 = (
+        tqdm(enumerate(structures), total=len(structures), desc="过滤")
+        if show_progress
+        else enumerate(structures)
+    )
+    for i, atoms in iterator2:
+        # 检查1：原子重叠
+        try:
+            distances = atoms.get_all_distances(mic=True)
+            np.fill_diagonal(distances, float("inf"))
+            if distances.min() < min_distance:
+                rejected["overlap"] += 1
+                continue
+        except Exception:
+            rejected["error"] += 1
+            continue
+
+        # 检查2：力过大
+        try:
+            atoms.calc = calc
+            forces = atoms.get_forces()
+            max_f = np.linalg.norm(forces, axis=1).max()
+            if max_f > max_force:
+                rejected["force"] += 1
+                continue
+        except Exception:
+            rejected["error"] += 1
+            continue
+
+        # 检查3：能量异常
+        e_per_atom = energies_per_atom[i]
+        if abs(e_per_atom - median_energy) > max_energy_deviation:
+            rejected["energy"] += 1
+            continue
+
+        reasonable.append(atoms)
+
+    print(f"过滤结果: {len(reasonable)}/{len(structures)} 个结构通过")
+    print(
+        f"  拒绝原因: 原子重叠={rejected['overlap']}, 力过大={rejected['force']}, "
+        f"能量异常={rejected['energy']}, 计算错误={rejected['error']}"
+    )
+
+    return reasonable
+
+
+# =============================================================================
 # Core MaxVol Algorithm (CPU Version)
 # =============================================================================
 

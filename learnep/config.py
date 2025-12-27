@@ -86,6 +86,35 @@ class SelectionConfig:
 
 
 @dataclass
+class BootstrapCondition:
+    """冷启动条件配置"""
+
+    id: str
+    structure_file: Path
+    run_in_content: str
+
+
+@dataclass
+class BootstrapFilterConfig:
+    """冷启动结构过滤配置"""
+
+    min_distance: float  # 最小原子间距（Å）
+    max_force: float  # 最大原子力（eV/Å）
+    max_energy_per_atom: float  # 最大每原子能量偏差（eV）
+
+
+@dataclass
+class BootstrapConfig:
+    """冷启动模式配置"""
+
+    enabled: bool
+    conditions: list[BootstrapCondition]
+    job_script: str
+    filter: BootstrapFilterConfig
+    timeout: int
+
+
+@dataclass
 class Config:
     """完整配置"""
 
@@ -94,6 +123,7 @@ class Config:
     nep: NepConfig
     gpumd: GpumdConfig
     selection: SelectionConfig
+    bootstrap: BootstrapConfig
 
 
 def _resolve_path(path_str: str, work_dir: Path) -> Path:
@@ -296,12 +326,40 @@ def load_config(config_file: str) -> Config:
         fps_min_distance=selection_raw.get("fps_min_distance", 0.01),
     )
 
+    # 解析冷启动配置
+    bootstrap_raw = raw_config.get("bootstrap", {})
+    bootstrap_conditions = []
+    for cond in bootstrap_raw.get("conditions", []):
+        bootstrap_conditions.append(
+            BootstrapCondition(
+                id=cond.get("id", "bootstrap"),
+                structure_file=_resolve_path(cond.get("structure_file", ""), work_dir),
+                run_in_content=cond.get("run_in", ""),
+            )
+        )
+
+    bootstrap_filter_raw = bootstrap_raw.get("filter", {})
+    bootstrap_filter = BootstrapFilterConfig(
+        min_distance=bootstrap_filter_raw.get("min_distance", 1.0),
+        max_force=bootstrap_filter_raw.get("max_force", 50.0),
+        max_energy_per_atom=bootstrap_filter_raw.get("max_energy_per_atom", 5.0),
+    )
+
+    bootstrap_config = BootstrapConfig(
+        enabled=bootstrap_raw.get("enabled", True),
+        conditions=bootstrap_conditions,
+        job_script=bootstrap_raw.get("job_script", "#!/bin/bash\ngpumd\n"),
+        filter=bootstrap_filter,
+        timeout=bootstrap_raw.get("timeout", 86400),
+    )
+
     return Config(
         global_config=global_config,
         vasp=vasp_config,
         nep=nep_config,
         gpumd=gpumd_config,
         selection=selection_config,
+        bootstrap=bootstrap_config,
     )
 
 
