@@ -68,7 +68,21 @@ def first_train(
     # 创建训练目录
     train_dir = work_dir / "first_train"
     train_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"创建训练目录: {train_dir}")
+    logger.info(f"训练目录: {train_dir}")
+
+    # 输出文件路径
+    nep_txt = train_dir / "nep.txt"
+    nep_restart = train_dir / "nep.restart"
+
+    # 检查是否已有训练结果（避免重复训练）
+    if nep_txt.exists() and nep_restart.exists():
+        logger.info("")
+        logger.info("检测到 first_train 目录中已有训练好的模型：")
+        logger.info(f"  nep.txt: {nep_txt}")
+        logger.info(f"  nep.restart: {nep_restart}")
+        logger.info("跳过训练，直接使用已有模型")
+        logger.info("=" * 80)
+        return nep_txt, nep_restart
 
     # 复制训练数据
     train_src = config.global_config.initial_train_data
@@ -101,8 +115,6 @@ def first_train(
     logger.info("  创建作业脚本（已自动添加 DONE 标记）")
 
     # 输出文件路径
-    nep_txt = train_dir / "nep.txt"
-    nep_restart = train_dir / "nep.restart"
     done_file = train_dir / "DONE"
 
     # 提交训练作业
