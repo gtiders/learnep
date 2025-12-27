@@ -207,6 +207,12 @@ def initialize_workspace(config: Config, logger: logging.Logger) -> None:
     # =========================================================================
     logger.info("\n步骤 3: 生成活跃集（MaxVol 选择）")
 
+    # 如果是 NO_DATA 模式或训练集为空，直接跳过此步骤
+    if init_mode == InitMode.NO_DATA or len(train_structures) == 0:
+        logger.info("  检测到 NO_DATA 模式或训练集为空")
+        logger.info("  跳过活跃集生成，将使用冷启动模式 (Bootstrap Mode)")
+        return
+
     # 预检查：确保每个元素类型都有足够的原子
     logger.info("  检查训练数据是否足够...")
     from collections import Counter
