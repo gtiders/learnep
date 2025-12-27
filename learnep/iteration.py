@@ -534,9 +534,14 @@ class IterationManager:
                 return False
             job_dirs.append(cond_dir)
 
-        # 提交所有作业
+            # 提交所有作业
         self.logger.info(f"提交 {len(job_dirs)} 个 GPUMD 作业...")
         for job_dir in job_dirs:
+            # 检查是否已完成
+            if (job_dir / "DONE").exists():
+                self.logger.info(f"  作业已完成 (DONE 存在): {job_dir.name}")
+                continue
+
             if self.task_manager.submit_job(job_dir) is None:
                 return False
 
@@ -607,46 +612,48 @@ class IterationManager:
         for cond in self.config.bootstrap.conditions:
             cond_dir = bootstrap_dir / cond.id
             cond_dir.mkdir(parents=True, exist_ok=True)
-            self.logger.info(f"  创建冷启动条件目录: {cond.id}")
+            self.logger.info(f"  检查冷启动条件目录: {cond.id}")
 
             # 复制结构文件
             structure_dst = cond_dir / "model.xyz"
-            shutil.copy2(cond.structure_file, structure_dst)
+            if not structure_dst.exists():
+                shutil.copy2(cond.structure_file, structure_dst)
 
-            # 复制 NEP 模型
+            # 复制 NEP 模型 (严格模式：只从 iter_dir 获取)
+            # 注意：在 run_bootstrap_gpumd 被调用前，initialized/prepared 必须保证 iter_dir/nep.txt 存在
             nep_src = iter_dir / "nep.txt"
-            if nep_src.exists():
-                shutil.copy2(nep_src, cond_dir / "nep.txt")
-            elif self.config.global_config.initial_nep_model:
-                # 从初始模型复制
-                shutil.copy2(
-                    self.config.global_config.initial_nep_model, cond_dir / "nep.txt"
-                )
-            else:
-                # 尝试从 first_train 目录查找（NO_MODEL 模式的后备）
-                first_train_nep = self.work_dir / "first_train" / "nep.txt"
-                if first_train_nep.exists():
-                    shutil.copy2(first_train_nep, cond_dir / "nep.txt")
-                    self.logger.info("  从 first_train 目录获取 nep.txt")
+            nep_dst = cond_dir / "nep.txt"
+
+            if not nep_dst.exists():
+                if nep_src.exists():
+                    shutil.copy2(nep_src, nep_dst)
                 else:
-                    self.logger.error("未找到 nep.txt，冷启动无法进行")
-                    raise FileNotFoundError("nep.txt 未找到")
+                    self.logger.error(f"严重错误: {nep_src} 不存在")
+                    self.logger.error("在调用冷启动前，初始化过程必须保证该文件存在")
+                    raise FileNotFoundError(f"{nep_src} 不存在")
 
             # 写入 run.in
-            with open(cond_dir / "run.in", "w") as f:
-                f.write(cond.run_in_content)
+            if not (cond_dir / "run.in").exists():
+                with open(cond_dir / "run.in", "w") as f:
+                    f.write(cond.run_in_content)
 
             # 写入作业脚本
-            with open(cond_dir / "job.sh", "w") as f:
-                f.write(_ensure_done_marker(self.config.bootstrap.job_script))
+            if not (cond_dir / "job.sh").exists():
+                with open(cond_dir / "job.sh", "w") as f:
+                    f.write(_ensure_done_marker(self.config.bootstrap.job_script))
 
             job_dirs.append(cond_dir)
 
-        self.logger.info(f"创建了 {len(job_dirs)} 个冷启动 GPUMD 任务")
+        self.logger.info(f"准备了 {len(job_dirs)} 个冷启动 GPUMD 任务")
 
         # 提交所有作业
         self.logger.info("\n提交冷启动 GPUMD 作业...")
         for job_dir in job_dirs:
+            # 检查是否已完成
+            if (job_dir / "DONE").exists():
+                self.logger.info(f"  作业已完成 (DONE 存在): {job_dir.name}")
+                continue
+
             if self.task_manager.submit_job(job_dir) is None:
                 return False
 
@@ -705,9 +712,14 @@ class IterationManager:
         bootstrap_dump_file = iter_dir / "bootstrap_dump.xyz"
         nep_file = iter_dir / "nep.txt"
 
-        # NEP 文件可能不在 iter_dir，尝试使用初始模型
+        # NEP 文件必须存在
         if not nep_file.exists():
-            nep_file = Path(self.config.global_config.initial_nep_model)
+            self.logger.error(f"严重错误: NEP 文件不存在: {nep_file}")
+            self.logger.error(
+                "冷启动选择阶段必须有 NEP 文件（即使是随机初始化或 first_train 生成的）"
+            )
+            # 在严格模式下，不应该回退到 config，因为 initialize/bootstrap 应该已经把文件准备好了
+            return []
 
         # 检查输入文件
         if not bootstrap_dump_file.exists():
@@ -906,6 +918,11 @@ class IterationManager:
         # 提交所有作业
         self.logger.info("\n提交 VASP 作业...")
         for job_dir in job_dirs:
+            # 检查是否已完成
+            if (job_dir / "DONE").exists():
+                self.logger.info(f"  作业已完成 (DONE 存在): {job_dir.name}")
+                continue
+
             if self.task_manager.submit_job(job_dir) is None:
                 return False
 
@@ -1005,9 +1022,12 @@ class IterationManager:
             self.logger.info("\n检查训练集大小...")
 
             # 读取 NEP 模型以获取描述符维度
-            # 注意：这里需要先有 nep.txt，所以在 iter_1 时使用初始模型
+            # 读取 NEP 模型以获取描述符维度
+            # 注意：这里需要先有 nep.txt。严格模式下，必须从定义的位置获取。
             if iter_num == 1:
-                nep_for_check = Path(self.config.global_config.initial_nep_model)
+                # 严格使用 iter_1 下已存在的 nep.txt
+                # 该文件应在初始化或冷启动阶段生成
+                nep_for_check = iter_dir / "nep.txt"
             else:
                 prev_iter_dir = self.work_dir / f"iter_{iter_num - 1}"
                 nep_for_check = prev_iter_dir / "nep.txt"
