@@ -1107,25 +1107,28 @@ class IterationManager:
             shutil.copy2(train_file, train_xyz_dst)
 
         # 复制 nep.txt 和 nep.restart（用于继续训练）
-        # iter_1: 从用户提供的初始文件
-        # iter_2+: 从上一轮的训练结果
+        # iter_1: 从初始化/冷启动阶段生成的文件获取 (严格模式)
+        # iter_2+: 从上一轮的训练结果获取
         if iter_num == 1:
-            # 第一轮：从配置文件获取初始文件
-            nep_src = Path(self.config.global_config.initial_nep_model)
-            restart_src = Path(self.config.global_config.initial_nep_restart)
+            nep_src = iter_dir / "nep.txt"
+            restart_src = iter_dir / "nep.restart"
 
+            # 严格检查：这些文件必须由上游步骤（initialize/first_train）保证存在
             if nep_src.exists():
                 shutil.copy2(nep_src, nep_dir / "nep.txt")
-                self.logger.info("  复制初始 nep.txt")
+                self.logger.info("  复制 nep.txt")
             else:
-                self.logger.error(f"  初始 nep.txt 不存在: {nep_src}")
+                self.logger.error(f"严重错误: iter_1 目录下缺失 nep.txt: {nep_src}")
+                self.logger.error("请检查初始化步骤是否正确执行")
                 return False
 
             if restart_src.exists():
                 shutil.copy2(restart_src, nep_dir / "nep.restart")
-                self.logger.info("  复制初始 nep.restart")
+                self.logger.info("  复制 nep.restart")
             else:
-                self.logger.error(f"  初始 nep.restart 不存在: {restart_src}")
+                self.logger.error(
+                    f"严重错误: iter_1 目录下缺失 nep.restart: {restart_src}"
+                )
                 return False
 
         else:
