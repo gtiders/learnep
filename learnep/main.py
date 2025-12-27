@@ -68,14 +68,24 @@ def main() -> None:
     # 设置日志
     logger = setup_logger(config.global_config.log_file)
 
-    # 初始化逻辑：如果 iter_1 不存在，自动初始化
+    # 初始化逻辑：如果 iter_1 不完整，自动初始化
     work_dir = Path(config.global_config.work_dir)
     iter_1_dir = work_dir / "iter_1"
+    iter_1_nep = iter_1_dir / "nep.txt"
 
-    if start_iter == 1 and not iter_1_dir.exists():
+    # 检查是否需要初始化：
+    # 1. 明确指定从第 1 轮开始
+    # 2. 且 (iter_1 目录不存在 OR iter_1 中没有 nep.txt)
+    need_init = start_iter == 1 and (not iter_1_dir.exists() or not iter_1_nep.exists())
+
+    if need_init:
         logger.info("=" * 80)
-        logger.info("检测到 iter_1 不存在，开始初始化工作空间")
+        logger.info("检测到 iter_1 不存在或不完整（缺少 nep.txt），开始初始化工作空间")
         logger.info("=" * 80)
+
+        # 如果目录存在但文件缺失，清理残留（可选，主要是不完整状态）
+        if iter_1_dir.exists():
+            logger.warning(f"目录 {iter_1_dir} 已存在但不完整，将被重新初始化")
 
         try:
             initialize_workspace(config, logger)
