@@ -1,24 +1,22 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "learnep"
-version = "0.2.0"
-description = "基于 MaxVol 算法的 NEP 势函数主动学习框架"
-readme = "README.md"
-requires-python = ">=3.12"
+version = "0.1.0"
 dependencies = [
-    "ase>=3.26.0",
-    "numpy>=2.4.0",
-    "pynep",
-    "pyyaml>=6.0.3",
-    "scipy>=1.11.0",
-    "tqdm>=4.67.1",
+    "typer",
+    "pyyaml",
+    "ase",
+    "tqdm",
+    "numpy",
+    "jax",
+    "pynep"
 ]
 
 [project.scripts]
-learnep-init = "learnep.initialize:main"
-learnep = "learnep.main:main"
-learnep-config = "learnep.config:main"
-learnep-first-train = "learnep.first_train:main"
-learnep-init-config = "learnep.init_config:main"
+learnep = "learnep.cli:app"
 
 [tool.uv]
 package = true
@@ -26,14 +24,6 @@ package = true
 [[tool.uv.index]]
 url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
 default = true
-
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools.packages.find]
-include = ["learnep*"]
-exclude = ["test*", "nep_maker*"]
 
 [tool.setuptools.package-data]
 learnep = ["*.yaml"]

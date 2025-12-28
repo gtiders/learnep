@@ -1,0 +1,178 @@
+# =============================================================================
+#                    LearnEP - NEP 主动学习框架配置文件
+# =============================================================================
+#
+# 基于 JAXVol 深度集成构建。
+#
+# 数据流规范：
+#   每一轮迭代 (iter_N) 结束时，框架会将下一轮所需的输入文件
+#   (nep.txt, nep.restart, train.xyz) 准备在 iter_N/next_iter/ 目录下。
+#   下一轮 (iter_N+1) 启动时自动从该目录读取。
+#
+#   * 特殊情况：如果是冷启动首次训练 (first_train)，也会生成 first_train/next_iter/
+#     供 iter_0 使用（或 iter_1，视从0还是1开始计数）。
+#
+# =============================================================================
+
+# #############################################################################
+#                              全局设置 (Global)
+# #############################################################################
+
+global:
+  work_dir: "./work"
+  max_iterations: 50
+  log_file: "learnep.log"
+  
+  initial_input:
+    train_data: "train.xyz"
+    nep_model: "nep.txt"          # (可选)
+    nep_restart: "nep.restart"    # (可选)
+
+  scheduler:
+    type: "pbs"
+    submit_cmd: "qsub {script}"          
+    status_cmd: "qstat {job_id}"
+    cancel_cmd: "qdel {job_id}"   # 超时取消命令 (Fire and Forget)
+    check_interval: 60
+
+# #############################################################################
+#                        主动选择配置 (Selection)
+# #############################################################################
+
+selection:
+  mode: "adaptive"
+  device: "gpu"
+  batch_size: 10000
+  n_max_label: 50
+
+  gamma:
+    threshold: 0.05
+    threshold_max: 20.0
+    auto_stop: true
+    std_tol: 1e-4
+
+# #############################################################################
+#                          NEP 配置 (Training)
+# #############################################################################
+
+nep:
+  first_train_input: |
+    type       2 Si O
+    cutoff     6 5
+    n_max      4 4
+    basis_size 8 8
+    l_max      4 2 1
+    neuron     80
+    batch      1000
+    generation 500000
+    population 50
+    lambda_e   1.0
+    lambda_f   1.0
+    lambda_v   0.1
+
+  train_input: |
+    type       2 Si O
+    cutoff     6 5
+    n_max      4 4
+    basis_size 8 8
+    l_max      4 2 1
+    neuron     80
+    batch      1000
+    generation 100000
+    population 50
+    lambda_e   1.0
+    lambda_f   1.0
+    lambda_v   0.1
+
+  job_script: |
+    #!/bin/bash
+    #PBS -N nep_train_{iter}
+    #PBS -q gpu
+    #PBS -l nodes=1:ppn=1:gpus=1
+    cd $PBS_O_WORKDIR
+    nep > nep.log
+    # Framework will automatically append 'touch DONE' here
+
+# #############################################################################
+#                       GPUMD 配置 (Exploration)
+# #############################################################################
+
+gpumd:
+  conditions:
+    - id: "ramping_temp"
+      structure_file: "input/init.xyz"
+      run_in: |
+        potential nep.txt
+        time_step 1.0
+        velocity 300
+        ensemble nvt_ber 300 1000 100
+        dump_exyz 1000 0 0 
+        run 200000
+
+  job_script: |
+    #!/bin/bash
+    #PBS -N gpumd_explore_{iter}
+    #PBS -q gpu
+    #PBS -l nodes=1:ppn=1:gpus=1
+    cd $PBS_O_WORKDIR
+    gpumd > gpumd.log
+
+# #############################################################################
+#                           VASP 配置 (Labeling)
+# #############################################################################
+
+vasp:
+  input_files:
+    - "input/INCAR"
+    - "input/POTCAR"
+    - "input/KPOINTS"
+  
+  job_script: |
+    #!/bin/bash
+    #PBS -N vasp_label_{iter}
+    #PBS -q regular
+    #PBS -l nodes=1:ppn=32
+    #PBS -l walltime=24:00:00
+    cd $PBS_O_WORKDIR
+    mpirun -np 32 vasp_std > vasp.log
+
+  timeout: 86400  # 批次总超时。达到后自动取消该批次所有未完成任务。
+
+# #############################################################################
+#                      迭代控制 (Iteration Control)
+# #############################################################################
+
+iteration_control:
+  enabled: true   # 开关：是否启用迭代覆盖逻辑
+  
+  # 覆盖规则列表
+  rules:
+    - iterations: [0, 1, 2, 3, 4]
+      gpumd:
+        conditions:
+          - id: "fast_explore"
+            structure_file: "input/init.xyz"
+            run_in: |
+              potential nep.txt
+              velocity 300
+              ensemble nvt_ber 300 800 100
+              dump_exyz 1000 0 0
+              run 50000
+      selection:
+        gamma:
+          threshold: 0.05
+          auto_stop: true
+
+    - iterations: [10]
+      nep:
+        train_input: |
+          type       2 Si O
+          cutoff     6 5
+          n_max      4 4
+          basis_size 8 8
+          l_max      4 2 1
+          neuron     80
+          batch      1000
+          generation 500000
+          population 50
+          lambda_e   1.0

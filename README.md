@@ -1,460 +1,200 @@
 # LearnEP - NEP 主动学习框架
 
-基于 MaxVol 算法的 NEP 势函数主动学习框架，提供自动化的结构选择和 DFT 标注流程。
-
-## 📋 主要功能
-
-本框架实现了完整的主动学习循环：
-
-```
-用户提供初始文件  →  iter_1: 第一轮迭代  →  iter_2: 第二轮...
-(nep.txt, train.xyz)      ↓
-                    GPUMD 探索
-                         ↓
-                    MaxVol 结构选择
-                         ↓
-                    VASP DFT 标注
-                         ↓
-                    NEP 重新训练
-                         ↓
-                    训练集修剪 (MaxVol)
-                         ↓
-                    更新活跃集
-                         ↓
-                    (循环至收敛)
-```
-
-**核心特性**：
-- ✅ **MaxVol 训练集修剪** - 自动控制训练集规模，提高训练效率
-- ✅ **NEP restart 文件支持** - 每轮训练继承上一轮的优化状态
-- ✅ **直接从 iter_1 开始** - 无需 iter_0，直接使用用户提供的初始文件
-- ✅ **自动添加 DONE 标记** - 所有 job.sh 脚本自动添加 `touch DONE`
-- ✅ **智能初始化** - 自动检测并准备 iter_1，无需手动初始化
-- ✅ **支持中断恢复** - 可从任意迭代继续运行
-- ✅ **完整的日志记录** - 详细记录每个步骤
-- ✅ **首次训练工具** - 提供从零开始训练初始 NEP 模型的工具
-
-## 🚀 快速开始
-
-### 1. 安装
-
-```bash
-# 使用 uv 安装（推荐）
-uv pip install -e .
-
-# 或使用 pip
-pip install -e .
-```
-
-### 2. 初始化配置文件
-
-```bash
-# 在当前目录生成配置模板
-learnep-init-config
-
-# 这会生成 config.yaml 文件，包含所有必需的配置选项
-```
-
-### 3. 准备初始文件
-
-如果已有初始 NEP 模型和训练数据：
-- `nep.txt`: 初始 NEP 模型
-- `nep.restart`: 初始 NEP restart 文件
-- `train.xyz`: 初始训练数据（包含能量、力、应力）
-- VASP 输入文件: `INCAR`, `POTCAR`, `KPOINTS`
-- GPUMD 探索初始结构文件
-
-如果没有初始 NEP 模型，可以使用首次训练工具：
-
-```bash
-# 从训练数据生成初始 nep.txt 和 nep.restart
-learnep-first-train config.yaml
-
-# 这会在工作目录生成 nep.txt 和 nep.restart 文件
-```
-
-### 4. 编辑配置文件
-
-```bash
-# 编辑生成的 config.yaml，设置文件路径和参数
-vim config.yaml
-```
-
-### 5. 运行主动学习
-
-**最简单的方式**（推荐）：
-
-```bash
-uv run learnep my_config.yaml
-```
-
-这会自动：
-1. 检测 iter_1 是否存在
-2. 如果不存在，自动初始化（复制初始文件、生成活跃集、准备 GPUMD）
-3. 运行迭代循环直到收敛或达到最大次数
-
-**分步运行**：
-
-```bash
-# 步骤 1: 仅初始化（可选）
-uv run learnep-init my_config.yaml
-
-# 步骤 2: 运行迭代
-uv run learnep my_config.yaml
-```
-
-**中断后恢复**：
-
-```bash
-# 从特定迭代继续（比如程序中断了）
-uv run learnep my_config.yaml --start-iter 3
-```
-
-## 📂 目录结构
-
-运行后的工作目录结构：
-
-```
-work/
-├── active_learning.log        # 日志文件
-├── iter_1/                    # 第一轮迭代
-│   ├──nep.txt                 # 初始/训练后的 NEP 模型
-│   ├── train.xyz              # 初始/扩充后的训练数据
-│   ├── active_set.asi         # 活跃集逆矩阵
-│   ├── gpumd/                 # GPUMD 探索目录
-│   │   ├── 300K_NVT/
-│   │   │   ├── model.xyz      # 初始结构
-│   │   │   ├── nep.txt        # NEP 模型
-│   │   │   ├── active_set.asi # 活跃集
-│   │   │   ├── run.in         # GPUMD 输入
-│   │   │   ├── job.sh         # 作业脚本 (自动添加 DONE)
-│   │   │   ├── DONE           # 完成标记
-│   │   │   └── extrapolation_dump.xyz  # GPUMD 输出
-│   │   └── 1000K_NVT/
-│   │       └── ...
-│   ├── large_gamma.xyz        # 合并的高 Gamma 结构
-│   ├── to_add.xyz             # 选中待标注的结构
-│   ├── vasp/                  # VASP DFT 计算目录
-│   │   ├── task_0000/
-│   │   │   ├── POSCAR
-│   │   │   ├── INCAR, POTCAR, KPOINTS
-│   │   │   ├── job.sh (自动添加 DONE)
-│   │   │   ├── DONE
-│   │   │   └── OUTCAR
-│   │   └── task_0001/
-│   │       └── ...
-│   └── nep_train/             # NEP 训练目录
-│       ├── train.xyz
-│       ├── nep.in
-│       ├── nep.txt
-│       ├── job.sh (自动添加 DONE)
-│       └── DONE
-├── iter_2/                    # 第二轮迭代
-│   └── ...
-└── iter_3/                    # 第三轮迭代
-    └── ...
-```
-
-## ⚙️ 配置文件说明
-
-### 全局配置
-
-```yaml
-global:
-  work_dir: ./work                    # 工作目录
-  initial_nep_model: nep.txt          # 初始 NEP 模型
-  initial_nep_restart: nep.restart    # 初始 NEP restart 文件
-  initial_train_data: train.xyz       # 初始训练数据
-  max_iterations: 10                  # 最大迭代次数
-  max_structures_per_iteration: 50    # 每轮最多标注的结构数
-  submit_command: "qsub job.sh"       # 作业提交命令
-  check_interval: 60                  # 检查作业状态的间隔(秒)
-  log_file: active_learning.log       # 日志文件
-```
-
-### VASP 配置
-
-```yaml
-vasp:
-  incar_file: INCAR           # INCAR 文件路径
-  potcar_file: POTCAR         # POTCAR 文件路径
-  kpoints_file: KPOINTS       # KPOINTS 文件路径
-  timeout: 86400              # 超时时间(秒)
-  job_script: |               # 作业脚本内容
-    #!/bin/bash
-    #PBS -N vasp
-    #PBS -l nodes=1:ppn=24
-    mpirun vasp_std
-    # 注意：框架会自动添加 'touch DONE'
-```
-
-### NEP 配置
-
-```yaml
-nep:
-  timeout: 86400              # 超时时间(秒)
-  input_content: |            # nep.in 文件内容（用于主动学习中的继续训练）
-    version        4
-    type           3 K Li Ge
-    cutoff         8 4
-    n_max          4 4
-    basis_size     12 12
-    l_max          4 2 1
-    neuron         30
-    batch          1000
-    generation     100000
-  
-  first_input_content: |      # 首次训练的 nep.in 内容
-    # 使用 learnep-first-train 时使用
-    # 通常需要更多的 generation
-    version        4
-    type           3 K Li Ge
-    cutoff         8 4
-    n_max          4 4
-    basis_size     12 12
-    l_max          4 2 1
-    neuron         30
-    batch          1000
-    generation     500000      # 从头训练需要更多代数
-  
-  job_script: |               # 作业脚本内容
-    #!/bin/bash
-    #PBS -N nep
-    #PBS -l nodes=1:ppn=1:gpus=1
-    nep
-    # 注意：框架会自动添加 'touch DONE'
-  
-  # 训练集修剪配置
-  # 当训练集过大时，使用 MaxVol 算法自动修剪
-  prune_train_set: true              # 是否启用训练集修剪
-  max_structures_factor: 1.0         # 最大结构数 = 描述符维度 × 此系数
-                                      # 例如：描述符100维，系数1.0 → 最多100个结构
-                                      #       系数0.8 → 最多80个结构
-```
-
-### GPUMD 配置
-
-```yaml
-gpumd:
-  timeout: 86400              # 超时时间(秒)
-  job_script: |               # 作业脚本内容
-    #!/bin/bash
-    #PBS -N gpumd
-    gpumd
-    # 注意：框架会自动添加 'touch DONE'
-  conditions:
-    - id: 300K_NVT           # 条件标识符
-      structure_file: init.xyz
-      run_in_content: |      # run.in 内容（必须包含 compute_extrapolation）
-        potential        nep.txt
-        velocity         300
-        ensemble         nvt_ber 300 300 100
-        time_step        1
-        compute_extrapolation active_set.asi 0.1
-        dump_exyz        100
-        run              100000
-```
-
-### MaxVol 选择配置
-
-```yaml
-selection:
-  gamma_tol: 1.001           # Gamma 收敛阈值
-  batch_size: 10000          # 批处理大小
-```
-
-## 📦 核心模块
-
-### 1. `config.py` - 配置加载
-
-- 加载和验证 YAML 配置
-- 自动解析相对/绝对路径
-- 检查 GPUMD 配置中的 `compute_extrapolation`
-
-### 2. `maxvol.py` - MaxVol 算法
-
-- 描述符投影计算
-- MaxVol 算法实现
-- Gamma 值计算
-- 活跃集生成和文件 I/O
-
-### 3. `initialize.py` - 初始化
-
-- 创建 iter_1 目录
-- 复制初始 NEP 模型和训练数据
-- 生成活跃集
-- 准备第一轮 GPUMD 任务
-
-### 4. `iteration.py` - 迭代管理
-
-- `TaskManager`: 任务提交和监控
-- `IterationManager`: 完整迭代循环
-  - GPUMD 探索
-  - 结构筛选（MaxVol）
-  - VASP 标注
-  - NEP 训练
-  - 活跃集更新
-
-### 5. `main.py` - 主程序
-
-- 整合初始化和迭代
-- 支持中断后恢复
-- 异常处理和日志
-
-## 🔄 迭代流程详解
-
-### iter_1 (第一轮) - 特殊处理
-
-当运行 `iter_1` 时，如果目录不存在，会自动：
-1. 从配置文件读取 `initial_nep_model` 和 `initial_train_data`
-2. 复制到 `iter_1/` 目录
-3. 使用初始训练数据生成活跃集
-4. 准备 GPUMD 探索任务
-
-### iter_2+ (后续迭代)
-
-每轮迭代包括 6 个步骤：
-
-1. **GPUMD 探索**: 运行分子动力学，收集高 Gamma 结构
-2. **结构筛选**: 使用 MaxVol 选择最有价值的结构
-3. **VASP 标注**: 对选中结构进行 DFT 计算
-4. **扩充数据集**: 将 DFT 结果追加到训练集
-5. **NEP 训练**: 用更新的数据集重新训练模型
-6. **更新活跃集**: 重新计算活跃集
-7. **准备下一轮**: 为下一轮 GPUMD 准备文件
-
-## ⚠️ 注意事项
-
-### 自动添加 DONE 标记
-
-**重要**：框架会自动在所有 `job.sh` 末尾添加 `touch DONE`。您的作业脚本中**不需要**手动添加此行。
-
-示例配置中的作业脚本：
-
-```yaml
-job_script: |
-  #!/bin/bash
-  #PBS -N myjob
-  #PBS -l nodes=1:ppn=24
-  
-  cd $PBS_O_WORKDIR
-  mpirun my_program
-  
-  # 不需要写 'touch DONE'，框架会自动添加！
-```
-
-### 路径解析规则
-
-- **绝对路径**: 直接使用
-- **相对路径**: 基于 `work_dir` 解析
-
-### GPUMD 要求
-
-每个 `run_in_content` **必须包含** `compute_extrapolation` 指令，例如：
-
-```
-compute_extrapolation active_set.asi 0.1
-```
-
-否则无法收集高 Gamma 结构。
-
-### 作业调度系统
-
-框架支持任意作业调度系统（PBS, SLURM, 本地运行等），只需在 `submit_command` 中指定提交命令。
-
-示例：
-- PBS: `qsub job.sh`
-- SLURM: `sbatch job.sh`
-- 本地: `bash job.sh &`
-
-## 🛠️ 依赖项
-
-- Python >= 3.12
-- numpy >= 2.4.0
-- scipy >= 1.11.0
-- ase >= 3.26.0
-- pyyaml >= 6.0.3
-- tqdm >= 4.67.1
-- PyNEP (从 GitHub 安装)
-
-## 📝 示例使用流程
-
-```bash
-# 1. 克隆仓库
-git clone https://github.com/gtiders/nep_auto.git
-cd nep_auto
-
-# 2. 安装依赖
-uv sync
-
-# 3. 安装包（开发模式）
-uv pip install -e .
-
-# 4. 生成配置文件
-learnep-init-config
-
-# 5. 编辑配置文件
-vim config.yaml
-
-# 6. (可选) 如果没有初始 NEP 模型，从头训练
-learnep-first-train config.yaml
-
-# 7. 运行主动学习
-learnep config.yaml
-
-# 8. 监控日志
-tail -f work/active_learning.log
-```
-
-## 🐛 故障排除
-
-### 问题 1: "上一轮目录不存在"
-
-**原因**: 尝试从 iter_N 开始，但 iter_{N-1} 不存在
-
-**解决**: 从 iter_1 开始：
-```bash
-uv run learnep my_config.yaml --start-iter 1
-```
-
-### 问题 2: "NEP 模型元素类型不匹配"
-
-**原因**: nep.txt 中的元素与 train.xyz 不一致
-
-**解决**: 检查 nep.txt 第一行的元素列表，确保与训练数据匹配
-
-### 问题 3: 作业一直不完成
-
-**原因**: DONE 文件未创建
-
-**解决**: 
-- 检查作业是否真的完成
-- 确认作业脚本中的 `touch DONE` 被执行（框架会自动添加）
-- 检查作业目录权限
-
-## 📚 更多文档
-
-- `OVERVIEW.md`: 开发者文档和模块详解
-- `config_example.yaml`: 配置文件示例
+**LearnEP** 是一个专为 NEP (Neuroevolution Potential) 势函数设计的高级主动学习（Active Learning）自动化框架。它深度集成了 `jaxvol` 库，利用自适应采样技术（Adaptive Sampling）和 MaxVol 算法，实现高效、鲁棒的训练-探索-筛选循环。
 
 ---
 
-## 更新日志
+## 目录
 
-### v0.2.0 - 2025-12-26
+1. [项目特点](#1-项目特点)
+2. [快速开始](#2-快速开始)
+3. [核心功能详解](#3-核心功能详解)
+   - [断点续传与重启](#31-断点续传与重启---restart-from)
+   - [冷启动与热启动机制](#32-冷启动与热启动机制)
+   - [迭代精细控制](#33-迭代精细控制-iteration_control)
+4. [配置指南](#4-配置指南)
+5. [工作流全解](#5-工作流全解)
+6. [文件与数据流](#6-文件与数据流)
+7. [注意事项](#7-注意事项)
+8. [测试与验证](#8-测试与验证)
 
-- ✅ **训练集修剪** - 使用 MaxVol 自动控制训练集规模，提高训练效率
-- ✅ **NEP restart 支持** - 支持 nep.restart 文件，每轮训练继承上一轮的优化状态
-- ✅ **配置文件初始化工具** - 新增 `learnep-init-config` 命令，快速生成配置文件模板
-- ✅ **首次训练工具** - 新增 `learnep-first-train` 命令，从零开始训练初始 NEP 模型
-- ✅ **改进的文档** - 更详细的配置说明和使用示例
-- ✅ **包数据配置** - 确保 YAML 配置模板随包安装
+---
 
-### v2.0 - 2024-12-25
+## 1. 项目特点
 
-- ✅ **移除 iter_0** - 直接从 iter_1 开始，简化流程
-- ✅ **自动添加 DONE** - 所有 job.sh 自动添加 `touch DONE`
-- ✅ **智能初始化** - iter_1 自动从用户提供的初始文件获取
-- ✅ **改进的中断恢复** - 更好的流程控制和错误提示
+*   **全自动化流程**: 自动管理从训练、MD探索、结构筛选、VASP计算到数据更新的全过程。
+*   **JaxVol 深度集成**: 使用 JAX 加速的自适应采样，自动处理从秩亏（Rank-Deficient）到满秩（Full-Rank）的过渡，基于 Gamma 指标智能筛选高不确定性结构。
+*   **鲁棒的作业调度**: 支持 PBS/Slurm 等调度器，具备“双重检查”（文件+队列状态）和超时自动取消机制，防止任务挂死。
+*   **严格的数据流**: 采用 `next_iter` 机制，确保每一轮迭代的数据严格隔离且可追溯。
 
-基于 nep_maker 项目的 CPU 版本重构，整合了所有 MaxVol 相关功能。
+---
+
+## 2. 快速开始
+
+### 2.1 初始化
+在工作目录下生成默认配置文件 `config.yaml`：
+```bash
+python -m learnep init --output config.yaml
+```
+
+### 2.2 运行
+启动主动学习循环：
+```bash
+python -m learnep run config.yaml
+```
+
+### 2.3 查看状态
+查看当前运行进度和最后一轮完成的迭代：
+```bash
+python -m learnep status
+```
+
+---
+
+## 3. 核心功能详解
+
+### 3.1 断点续传与重启 (`--restart-from`)
+如果某轮迭代（例如第 5 轮）出现参数错误或需要调整策略，您可以使用重启功能：
+
+```bash
+python -m learnep run config.yaml --restart-from 5
+```
+
+**执行逻辑**:
+1. **自动清理**: 系统会立即删除 `iter_005` 及其之后所有迭代（`iter_006`, ...）的文件夹，确保环境干净。
+2. **状态重置**: 修改 `status.json`，将“最后完成迭代”重置为 4。
+3. **重新开始**: 程序从第 5 轮重新开始运行。
+
+### 3.2 冷启动与热启动机制
+LearnEP 会根据 `iter_000` 初始文件的存在情况，智能决定启动模式：
+
+*   **冷启动 (Cold Start)**:
+    *   **触发条件**: 只有 `train.xyz`，没有模型文件。
+    *   **行为**: 使用配置中的 `first_train_input` 参数从头开始训练 NEP 模型。
+*   **热启动 (Hot Start)**:
+    *   **触发条件**: 目录下同时存在 `nep.txt` (模型) 和 `nep.restart` (训练状态)。
+    *   **行为**:
+        *   **第 0 轮**: 直接使用已有的 `nep.txt` 进行 MD 探索，**跳过初始训练**，节省时间。
+        *   **后续轮次**: 读取上一轮的模型和状态，进行增量微调（Fine-tuning）。
+    *   **要求**: 必须严格同时提供这两个文件，缺一不可（否则视为无法继续训练，转为冷启动）。
+
+### 3.3 迭代精细控制 (`iteration_control`)
+您可以在 `config.yaml` 中为特定的迭代轮次覆盖全局设置。例如，在初始几轮使用较短的 MD 步数快速探索：
+
+```yaml
+iteration_control:
+  enabled: true
+  rules:
+    - iterations: [0, 1, 2]  # 对第0,1,2轮生效
+      gpumd:
+        conditions:
+          - id: "short_explore"
+            run_in: "dump_exyz 100 0 0" # 跑得更短
+```
+
+---
+
+## 4. 配置指南
+
+配置文件 `config.yaml` 分为几个关键部分：
+
+### Global (全局设置)
+*   `work_dir`: 所有迭代文件夹生成的主目录。
+*   `scheduler`: 作业调度器配置。
+    *   `submit_cmd`: 提交命令 (如 `qsub {script}`)。
+    *   `check_cmd`: 状态检查命令 (如 `qstat {job_id}`)。
+    *   `cancel_cmd`: 取消命令 (如 `qdel {job_id}`)，用于超时清理。
+
+### NEP (训练)
+*   `train_input`: 标准训练参数（`nep.in` 内容）。
+*   `first_train_input`: (可选) 仅用于冷启动第一轮的参数（通常步数更长）。
+*   `job_script`: 训练任务的提交脚本模板。
+
+### GPUMD (探索)
+*   `conditions`: 定义多个探索条件（温度、压力等）。每个条件会生成一个独立的子任务。
+*   `run_in`: GPUMD 的输入参数，必须包含 `dump_exyz` 以输出扩展 XYZ 格式（含力信息）。
+
+### Selection (筛选 - JaxVol)
+*   `mode`: `adaptive` (推荐) 或 `maxvol`.
+*   `gamma`:
+    *   `threshold`: Gamma 阈值，只有超过此值的结构才会被选中。
+    *   `threshold_max`: 安全阈值，超过此值会触发警告或停止，防止非物理结构进入。
+    *   `n_max_label`: 每轮最大送去 VASP 计算的结构数量（节省算力）。
+
+### VASP (标号)
+*   `input_files`: 需要复制到计算目录的文件 (`INCAR`, `POTCAR`, `KPOINTS`)。
+*   `job_script`: VASP 计算脚本模板。
+*   `timeout`: 超时时间（秒）。如果 VASP 任务卡住，超过此时间会强制取消并进入下一阶段。
+
+---
+
+## 5. 工作流全解
+
+Orchestrator 严格按照以下顺序执行每一轮迭代（Step 0 到 Step N）：
+
+1.  **准备阶段 (Prepare)**:
+    *   创建 `iter_NNN` 目录。
+    *   从上一轮的 `next_iter` 文件夹（或初始输入）复制 `nep.txt`, `nep.restart`, `train.xyz`, `active_set.asi`。
+2.  **训练阶段 (Train)**:
+    *   判断是否热启动。
+    *   提交 NEP 训练任务。
+    *   等待任务完成，生成新的 `nep.txt`。
+3.  **探索阶段 (Explore)**:
+    *   利用新模型并行运行多个 GPUMD MD 任务。
+    *   生成轨迹文件 (`dump.xyz`)。
+4.  **筛选阶段 (Selection)**:
+    *   加载 `train.xyz` 构建/更新活跃集 (ASI)。
+    *   使用 JaxVol 扫描 MD 轨迹，计算每个帧的 Gamma 值。
+    *   筛选出高不确定性结构，去重并排序，保存为 `candidates.xyz`。
+5.  **标号阶段 (Label)**:
+    *   为筛选出的候选结构生成 VASP 任务 (`POSCAR`)。
+    *   提交所有 DFT 计算任务。
+    *   **超时监控**: 如果任务超时，自动 `kill` 并尝试收集已完成的部分。
+6.  **更新阶段 (Update)**:
+    *   收集 DFT 计算结果（能量、力、维里）。
+    *   将新数据追加到 `train.xyz`。
+    *   **准备下一轮**: 将最新的模型、数据和状态文件复制到 `next_iter` 子目录，供下一轮使用。
+
+---
+
+## 6. 文件与数据流
+
+了解文件流向有助于排错。
+
+| 阶段 | 输入文件 | 关键输出 | 备注 |
+| :--- | :--- | :--- | :--- |
+| **0. 初始** | 用户提供 | `train.xyz` (必须), `nep.txt` (可选) | 如有 `nep.txt` 则触发热启动 |
+| **1. 训练** | `nep.in` | `nep.txt`, `nep.restart` | 模型和断点文件 |
+| **2. 探索** | `run.in`, `nep.txt` | `dump.xyz` | 包含构型和力/能量预测 |
+| **3. 筛选** | `dump.xyz`, `active_set.asi` | `candidates.xyz` | **关键产物**: 待计算结构 |
+| **4. 标号** | `POSCAR` (from candidates) | `vasprun.xml` / `OUTCAR` | 真实 DFT 数据 |
+| **5. 下一轮** | `train.xyz` (已合并新数据) | `iter_N/next_iter/` | 包含所有传递给 N+1 轮的文件 |
+
+---
+
+## 7. 注意事项
+
+1.  **调度器命令**: 请务必根据您集群的实际情况（PBS, Slurm, LSF）修改 `config.yaml` 中的 `submit_cmd` 和 `check_cmd`。如果检查命令配置错误，程序可能会误判任务状态导致无限等待。
+2.  **VASP 超时**: 建议设置合理的 `timeout`。如果 VASP 计算死循环，不仅浪费机时，还会阻塞整个主动学习流程。
+3.  **结构合理性**: JaxVol 筛选出的结构可能是高能非物理结构。建议在 VASP 计算脚本中加入简单的预检查，或者在 `selection` 配置中调整 `gamma` 阈值防止选中极端离群点。
+4.  **路径**: 所有路径建议使用**绝对路径**，避免因工作目录切换导致找不到文件。
+
+---
+
+## 8. 测试与验证
+
+在正式运行前，强烈建议运行内置的 Mock 测试套件，它不需要真实的 VASP/GPU 环境即可验证流程逻辑。
+
+```bash
+# 运行完整测试
+python tests/run_tests.py
+```
+
+测试包含：
+*   **Cold Start**: 验证冷启动逻辑。
+*   **Long Run**: 模拟 10 轮迭代，验证数据流稳定性。
+*   **Restart**: 验证中断恢复和文件清理功能。
+
+---
+
+**LearnEP Team**
