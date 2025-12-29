@@ -46,10 +46,16 @@ selection:
   n_max_label: 50
 
   gamma:
-    threshold: 0.05
+  gamma:
+    # MaxVol 模式 (正常迭代)
+    threshold: 0.1
     threshold_max: 20.0
-    auto_stop: true
-    std_tol: 1e-4
+    
+    # QR/Basis 模式 (冷启动/特征空间构建)
+    # 筛选区间: [qr_threshold, qr_threshold_max]
+    # 如果结构得分 > qr_threshold_max，则不仅丢弃，还会触发安全熔断停止扫描
+    qr_threshold: 1e-4
+    qr_threshold_max: 0.5
 
 # #############################################################################
 #                          NEP 配置 (Training)
@@ -161,7 +167,7 @@ iteration_control:
       selection:
         gamma:
           threshold: 0.05
-          auto_stop: true
+          qr_threshold: 1e-4
 
     - iterations: [10]
       nep:

@@ -328,8 +328,9 @@ class LearnEPOrchestrator:
                     asi_file=asi_path,
                     gamma_min=gamma_conf.get("threshold", 0.05),
                     gamma_max=gamma_conf.get("threshold_max", 20.0),
-                    auto_stop_qr=gamma_conf.get("auto_stop", False),
-                    std_tol=gamma_conf.get("std_tol", 1e-4),
+                    qr_threshold=gamma_conf.get("qr_threshold", 1e-4),
+                    qr_threshold_max=gamma_conf.get("qr_threshold_max", 0.5),
+                    auto_stop_qr=False,
                 )
                 candidates.extend(selected)
             except Exception as e:
