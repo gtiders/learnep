@@ -59,8 +59,17 @@ class LearnEPOrchestrator:
             self._handle_restart(restart_from)
             start_iter = restart_from
         else:
-            # Determine start iteration from status
-            start_iter = self._get_last_completed_iter() + 1
+            # User Request: Pure run should not be affected by status.json logic blindly.
+            # We default to 0.
+            # If status.json exists, we just log it, we don't let it dictate starting point automatically
+            # unless we implement a specific 'resume' flag. Default run = fresh start or explicit restart.
+            status_iter = self._get_last_completed_iter()
+            if status_iter >= 0:
+                self.logger.info(
+                    f"Status Record: Last completed iteration was {status_iter}. (Ignoring for current run)"
+                )
+
+            start_iter = 0
 
         self.logger.info(f"Starting from Iteration {start_iter}")
 
@@ -100,26 +109,26 @@ class LearnEPOrchestrator:
         self._prepare_iteration_data(n, iter_dir, iter_conf)
 
         # 2. Training (Check/Train)
-        self._run_train(n, iter_dir, iter_conf)
+        # Returns absolute path to nep.txt
+        nep_model_path = self._run_train(n, iter_dir, iter_conf)
 
         # 3. Exploration (GPUMD)
-        traj_files = self._run_explore(n, iter_dir, iter_conf)
+        traj_files = self._run_explore(n, iter_dir, iter_conf, nep_model_path)
 
         # 4. Selection (JaxVol)
-        candidates = self._run_selection(n, iter_dir, iter_conf, traj_files)
+        candidates = self._run_selection(
+            n, iter_dir, iter_conf, traj_files, nep_model_path
+        )
 
         if not candidates:
             self.logger.info(
                 "No candidates selected. Iteration converged or exploration insufficient."
             )
-            # Prepare next iter anyway (just forward model) or stop?
-            # Forward model to keep loop alive or user intervention.
-            self.nep_task.prepare_next_iter(iter_dir)
+            # Prepare next iter anyway (just forward model) to keep loop alive or allow manual check
+            self._prep_next_from_paths(iter_dir, nep_model_path)
             return
 
-        # Save candidates to file (User Request)
-        # Ensure gamma info is preserved (Extended XYZ)
-        # Also add summary stat to info for easy reading
+        # Save candidates to file
         for cand in candidates:
             if "gamma" in cand.arrays:
                 cand.info["gamma_max"] = float(np.max(cand.arrays["gamma"]))
@@ -132,22 +141,36 @@ class LearnEPOrchestrator:
         new_data = self._run_label(n, iter_dir, iter_conf, candidates)
 
         # 6. Update (Merge Data & Prep Next)
-        self._run_update(n, iter_dir, new_data)
+        self._run_update(n, iter_dir, new_data, nep_model_path)
 
     def _prepare_iteration_data(self, n: int, iter_dir: str, conf: dict):
         os.makedirs(iter_dir, exist_ok=True)
 
         self.logger.info(f"Preparing data for iter_{n}...")
 
+        # File Rename Mapping
+        DEST_MAP = {
+            "train_data": "train.xyz",
+            "nep_model": "nep.txt",
+            "nep_restart": "nep.restart",
+        }
+
         # Source: prev_iter/next_iter OR initial_input
         if n == 0:
             # Initial Load
             init_inp = self.config.initial_input
-            # Copy train, nep.txt, etc. if they exist
-            # Note: User might only provide train.xyz for cold start
             for k, f in init_inp.items():
                 if f and os.path.exists(f):
-                    shutil.copy2(f, os.path.join(iter_dir, os.path.basename(f)))
+                    # Determine destination name
+                    dest_name = DEST_MAP.get(k, os.path.basename(f))
+                    dest_path = os.path.join(iter_dir, dest_name)
+
+                    self.logger.info(f"  Copying {f} -> {dest_path}")
+                    shutil.copy2(f, dest_path)
+                elif f:
+                    self.logger.warning(
+                        f"  [Warn] Initial input file not found: {f} (key={k})"
+                    )
         else:
             prev_iter = n - 1
             prev_next_dir = os.path.join(
@@ -155,54 +178,77 @@ class LearnEPOrchestrator:
             )
 
             if os.path.exists(prev_next_dir):
-                for f in os.listdir(prev_next_dir):
-                    shutil.copy2(
-                        os.path.join(prev_next_dir, f), os.path.join(iter_dir, f)
-                    )
+                files = os.listdir(prev_next_dir)
+                self.logger.info(f"  Copying {len(files)} files from {prev_next_dir}")
+                for f in files:
+                    src = os.path.join(prev_next_dir, f)
+                    dst = os.path.join(iter_dir, f)
+                    shutil.copy2(src, dst)
             else:
                 self.logger.warning(
                     f"Warning: Previous next_iter dir not found: {prev_next_dir}"
                 )
 
-    def _run_train(self, n: int, iter_dir: str, conf: dict):
-        model_path = os.path.join(iter_dir, "nep.txt")
-        restart_path = os.path.join(
-            iter_dir, "nep.restart"
-        )  # Only needed for hot start
+    def _run_train(self, n: int, iter_dir: str, conf: dict) -> str:
+        # User Request: separate sub-directory for NEP
+        nep_work_dir = os.path.join(iter_dir, "nep")
+        os.makedirs(nep_work_dir, exist_ok=True)
+
+        model_path = os.path.join(nep_work_dir, "nep.txt")
+        restart_path = os.path.join(nep_work_dir, "nep.restart")
+
+        # Files at iter_dir root
+        root_train = os.path.join(iter_dir, "train.xyz")
+        root_model = os.path.join(iter_dir, "nep.txt")
+        root_restart = os.path.join(iter_dir, "nep.restart")
+
+        # Copy files to sub-dir
+        if os.path.exists(root_train):
+            shutil.copy2(root_train, os.path.join(nep_work_dir, "train.xyz"))
+        if os.path.exists(root_model):
+            shutil.copy2(root_model, model_path)
+        if os.path.exists(root_restart):
+            shutil.copy2(root_restart, restart_path)
 
         # Decide Input Content
-        # Strict Hot Start Check: need BOTH nep.restart AND nep.txt to continue.
-        # If user provides model but no restart => assume we can't hot start training properly (NEP usage).
-        # Actually usually nep.restart is the key for CONTINUATION.
+        # Check hot start in SUB_DIR
         if os.path.exists(restart_path) and os.path.exists(model_path):
             # Hot Start Detected
             if n == 0:
                 self.logger.info(
-                    "Hot Start at Iteration 0: Skipping initial training (using provided model for exploration)."
+                    "Hot Start at Iteration 0: Skipping initial training (using provided model)."
                 )
-                return
+                return model_path
 
             self.logger.info(f"Hot Start Training (Iteration {n})...")
             inp_content = conf["nep"]["train_input"]
         else:
             self.logger.info("Cold Start / First Training (Missing restart files)...")
-            # If first_train_input not defined, fallback to train_input
             inp_content = conf["nep"].get(
                 "first_train_input", conf["nep"]["train_input"]
             )
 
         job_script = conf["nep"]["job_script"].replace("{iter}", str(n))
+        script = self.nep_task.prepare_train(nep_work_dir, inp_content, job_script)
 
-        script = self.nep_task.prepare_train(iter_dir, inp_content, job_script)
+        jid = self.scheduler.submit_job(script, nep_work_dir)
 
-        jid = self.scheduler.submit_job(script, iter_dir)
-        self.scheduler.wait_jobs({jid: iter_dir})
+        # User Request: Timeout
+        timeout = conf["nep"].get("timeout", None)  # Default None or set default?
+        # If user says "no limit on wait time", we add one?
+        # User said "seems no limit on wait time". We should add one.
+        if timeout is None:
+            timeout = 86400 * 3  # 3 days default safety
+
+        self.scheduler.wait_jobs({jid: nep_work_dir}, timeout=timeout)
 
         # Verify result
-        if not os.path.exists(os.path.join(iter_dir, "nep.txt")):
+        if not os.path.exists(model_path):
             raise RuntimeError(f"Training failed in iter {n}")
 
-    def _run_explore(self, n: int, iter_dir: str, conf: dict):
+        return model_path
+
+    def _run_explore(self, n: int, iter_dir: str, conf: dict, nep_path: str):
         conditions = conf["gpumd"]["conditions"]
         job_script_tmpl = conf["gpumd"]["job_script"].replace("{iter}", str(n))
 
@@ -216,6 +262,14 @@ class LearnEPOrchestrator:
         for cond in conditions:
             cond_id = cond["id"]
             c_dir = os.path.join(explore_dir, cond_id)
+            os.makedirs(c_dir, exist_ok=True)
+
+            # Copy NEP model passed from training/init
+            if nep_path and os.path.exists(nep_path):
+                shutil.copy2(nep_path, os.path.join(c_dir, "nep.txt"))
+            else:
+                self.logger.error(f"NEP model not found at {nep_path}")
+                raise FileNotFoundError("NEP model missing for exploration.")
 
             script = self.gpumd_task.prepare_run(
                 c_dir, cond["run_in"], cond["structure_file"], job_script_tmpl
@@ -224,7 +278,8 @@ class LearnEPOrchestrator:
             jid = self.scheduler.submit_job(script, c_dir)
             job_map[jid] = c_dir
 
-        self.scheduler.wait_jobs(job_map)
+        timeout = conf["gpumd"].get("timeout", 86400)  # Default 24h
+        self.scheduler.wait_jobs(job_map, timeout=timeout)
 
         # Collect trajectories
         for c_dir in job_map.values():
@@ -235,17 +290,15 @@ class LearnEPOrchestrator:
         return traj_files
 
     def _run_selection(
-        self, n: int, iter_dir: str, conf: dict, traj_files: list
+        self, n: int, iter_dir: str, conf: dict, traj_files: list, nep_path: str
     ) -> list:
         sel_conf = conf["selection"]
         mode = sel_conf.get("mode", "adaptive")
         gamma_conf = sel_conf.get("gamma", {})
 
-        # Asi file comes from previous iteration training data (technically get_active_set from train.xyz)
-        # But wait, jaxvol usually builds active set from *train.xyz*.
-        # So we need to build active set from current train.xyz first.
+        # Use passed nep_path
+        nep_txt = nep_path
         train_xyz = os.path.join(iter_dir, "train.xyz")
-        nep_txt = os.path.join(iter_dir, "nep.txt")
 
         self.logger.info("Building Active Set from current train.xyz...")
         try:
@@ -317,7 +370,7 @@ class LearnEPOrchestrator:
 
         return self.vasp_task.collect_results(label_dir)
 
-    def _run_update(self, n: int, iter_dir: str, new_data: list):
+    def _run_update(self, n: int, iter_dir: str, new_data: list, nep_path: str):
         train_path = os.path.join(iter_dir, "train.xyz")
 
         # Append
@@ -328,7 +381,29 @@ class LearnEPOrchestrator:
         self.logger.info(f"Updated train.xyz: {len(existing)} -> {len(combined)}")
 
         # Prep Next Iter
-        self.nep_task.prepare_next_iter(iter_dir)
+        self._prep_next_from_paths(iter_dir, nep_path)
+
+    def _prep_next_from_paths(self, iter_dir: str, nep_path: str):
+        next_iter_dir = os.path.join(iter_dir, "next_iter")
+        os.makedirs(next_iter_dir, exist_ok=True)
+
+        # 1. New Model files
+        if os.path.exists(nep_path):
+            shutil.copy2(nep_path, os.path.join(next_iter_dir, "nep.txt"))
+
+        nep_dir = os.path.dirname(nep_path)
+        restart_path = os.path.join(nep_dir, "nep.restart")
+        if os.path.exists(restart_path):
+            shutil.copy2(restart_path, os.path.join(next_iter_dir, "nep.restart"))
+
+        # 2. Updated Train Data
+        train_path = os.path.join(iter_dir, "train.xyz")
+        if os.path.exists(train_path):
+            shutil.copy2(train_path, os.path.join(next_iter_dir, "train.xyz"))
+
+        # 3. ASI files (at iter_dir root)
+        for asi in glob.glob(os.path.join(iter_dir, "*.asi")):
+            shutil.copy2(asi, os.path.join(next_iter_dir, os.path.basename(asi)))
 
     def _get_last_completed_iter(self):
         try:
