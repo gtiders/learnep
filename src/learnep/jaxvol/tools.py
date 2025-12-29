@@ -79,48 +79,65 @@ def scan_trajectory_gamma(
 
     selected_atoms = []
 
-    for i, atoms in enumerate(tqdm(traj, desc="Scanning")):
-        calc.calculate(atoms, ["B_projection"])
-        B_projection = calc.results["B_projection"]
-
-        gamma_values = np.zeros(len(atoms))
-        symbols = atoms.get_chemical_symbols()
-
-        frame_max_gamma = 0.0
-
-        for e, M in active_set_inverse.items():
-            indices = [k for k, s in enumerate(symbols) if s == e]
-            if not indices:
+    # Use tqdm context manager for postfix updates
+    with tqdm(traj, desc="Scanning") as pbar:
+        for i, atoms in enumerate(pbar):
+            # Safe calculation
+            try:
+                calc.calculate(atoms, ["B_projection"])
+                B_projection = calc.results["B_projection"]
+            except Exception as e:
+                tqdm.write(f"  [Error] Failed to calc B_projection for frame {i}: {e}")
                 continue
 
-            b_sub = B_projection[indices]
+            gamma_values = np.zeros(len(atoms))
+            symbols = atoms.get_chemical_symbols()
 
-            if matrix_types.get(e) == "basis":
-                # Distance metric (QR)
-                coeffs = b_sub @ M
-                proj = coeffs @ M.T
-                resid = b_sub - proj
-                g_val = np.linalg.norm(resid, axis=1)
-            else:
-                # MaxVol metric
-                coeffs = b_sub @ M
-                g_val = np.max(np.abs(coeffs), axis=1)
+            frame_max_gamma = 0.0
 
-            gamma_values[indices] = g_val
-            frame_max_gamma = max(frame_max_gamma, np.max(g_val))
+            for e, M in active_set_inverse.items():
+                indices = [k for k, s in enumerate(symbols) if s == e]
+                if not indices:
+                    continue
 
-        atoms.arrays["gamma"] = gamma_values
+                b_sub = B_projection[indices]
 
-        # 1. Safety Cut-off (Explosion Detection)
-        if frame_max_gamma > cut_safety:
-            print(
-                f"[STOP] Frame {i} Score ({frame_max_gamma:.6f}) exceeded Safety Limit ({cut_safety}). Stopping scan."
-            )
-            break
+                if matrix_types.get(e) == "basis":
+                    # Distance metric (QR)
+                    # Calculate projection onto the current basis M
+                    coeffs = b_sub @ M
+                    proj = coeffs @ M.T
 
-        # 2. Candidate Selection
-        if frame_max_gamma >= cut_min:
-            selected_atoms.append(atoms)
+                    # resid is the vector component perpendicular to the basis (Residual Vector)
+                    # Its norm is the Euclidean distance to the subspace
+                    resid = b_sub - proj
+                    g_val = np.linalg.norm(resid, axis=1)
+                else:
+                    # MaxVol metric
+                    coeffs = b_sub @ M
+                    g_val = np.max(np.abs(coeffs), axis=1)
+
+                gamma_values[indices] = g_val
+                frame_max_gamma = max(frame_max_gamma, np.max(g_val))
+
+            atoms.arrays["gamma"] = gamma_values
+
+            # Show real-time max value in progress bar to help user estimation
+            pbar.set_postfix({"max_val": f"{frame_max_gamma:.2e}"})
+
+            # 1. Safety Cut-off (Explosion Detection)
+            if frame_max_gamma > cut_safety:
+                tqdm.write(
+                    f"[STOP] Frame {i} Score ({frame_max_gamma:.6f}) exceeded Safety Limit ({cut_safety}). Stopping scan."
+                )
+                break
+
+            # 2. Candidate Selection
+            if frame_max_gamma >= cut_min:
+                selected_atoms.append(atoms)
+                tqdm.write(
+                    f"  [Select] Frame {i}: Max Score = {frame_max_gamma:.6f} (>= {cut_min})"
+                )
 
     return selected_atoms
 
