@@ -46,15 +46,14 @@ selection:
   n_max_label: 50
 
   gamma:
-  gamma:
-    # MaxVol 模式 (正常迭代)
+    # MaxVol 模式 (正常迭代, >=1.0)
     threshold: 0.1
     threshold_max: 20.0
     
-    # QR/Basis 模式 (冷启动/特征空间构建)
-    # 筛选区间: [qr_threshold, qr_threshold_max]
-    # 如果结构得分 > qr_threshold_max，则不仅丢弃，还会触发安全熔断停止扫描
-    qr_threshold: 1e-4
+    # QR/Basis 模式 (冷启动, 0.0 ~ 1.0)
+    # 使用相对残差 (Relative Residual)
+    # 0.02 表示该结构包含 2% 的新特征信息 (线性独立成分)
+    qr_threshold: 0.02
     qr_threshold_max: 0.5
 
 # #############################################################################

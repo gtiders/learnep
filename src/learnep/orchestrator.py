@@ -304,9 +304,6 @@ class LearnEPOrchestrator:
         try:
             train_atoms = read(train_xyz, index=":")
             B_proj, B_idx = get_B_projections(train_atoms, nep_txt)
-            # This generates 'active_set.asi' in CWD. We should handle paths.
-            # get_active_set writes 'active_set.asi' by default.
-            # We explicitly pass filename.
             asi_path = os.path.join(iter_dir, "active_set.asi")
 
             get_active_set(
@@ -320,33 +317,35 @@ class LearnEPOrchestrator:
         candidates = []
         for t_file in traj_files:
             try:
-                traj = read(t_file, index=":")  # or load_nep
+                traj = read(t_file, index=":")
 
+                # MaxVol: Extrapolation Grade (>= 1.0)
+                # QR: Relative Residual (0.0 - 1.0)
                 selected = scan_trajectory_gamma(
                     traj,
                     nep_file=nep_txt,
                     asi_file=asi_path,
                     gamma_min=gamma_conf.get("threshold", 0.05),
                     gamma_max=gamma_conf.get("threshold_max", 20.0),
-                    qr_threshold=gamma_conf.get("qr_threshold", 1e-4),
+                    qr_threshold=gamma_conf.get("qr_threshold", 0.02),
                     qr_threshold_max=gamma_conf.get("qr_threshold_max", 0.5),
+                    min_dist=sel_conf.get("min_dist", None),
                     auto_stop_qr=False,
                 )
                 candidates.extend(selected)
             except Exception as e:
                 self.logger.error(f"Scanning {t_file} failed: {e}")
 
-        # Limit count
-        n_max = sel_conf.get("n_max_label", 50)
-        if len(candidates) > n_max:
-            # Simple truncation or FPS?
-            # For now truncation (greedy top gamma logic handled inside scan? no scan returns all valid).
-            # We should sort by gamma? scan_trajectory_gamma returns them in temporal order.
-            # Ideally we sort by gamma.
-            candidates.sort(key=lambda x: max(x.arrays.get("gamma", [0])), reverse=True)
-            candidates = candidates[:n_max]
+        if not candidates:
+            return []
 
-        return candidates
+        # Sort by Gamma (Highest Score = Most Info)
+        candidates.sort(key=lambda x: max(x.arrays.get("gamma", [0])), reverse=True)
+
+        n_max = sel_conf.get("n_max_label", 50)
+        self.logger.info(f"Selected {len(candidates)} candidates. Keeping top {n_max}.")
+
+        return candidates[:n_max]
 
     def _run_label(self, n: int, iter_dir: str, conf: dict, candidates: list):
         label_dir = os.path.join(iter_dir, "labeling")

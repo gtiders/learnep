@@ -24,6 +24,7 @@ def scan_trajectory_gamma(
     gamma_max=None,
     qr_threshold=None,
     qr_threshold_max=None,
+    min_dist=None,
     auto_stop_qr=False,  # Deprecated/Ignored
 ):
     """
@@ -37,6 +38,7 @@ def scan_trajectory_gamma(
         gamma_max: Safety cut-off for MaxVol
         qr_threshold: Lower bound for QR/Basis selection (linear independence)
         qr_threshold_max: Safety cut-off for QR/Basis
+        min_dist: Minimum allowed interatomic distance (Angstrom).
         auto_stop_qr: Deprecated argument, ignored.
 
     Returns:
@@ -77,6 +79,9 @@ def scan_trajectory_gamma(
             f"  [Config] MaxVol Mode: Threshold >= {cut_min}, Safety Cutoff > {cut_safety}"
         )
 
+    if min_dist is not None:
+        print(f"  [Config] Physical Check: Min Dist >= {min_dist} Å")
+
     selected_atoms = []
 
     # Use tqdm context manager for postfix updates
@@ -103,15 +108,20 @@ def scan_trajectory_gamma(
                 b_sub = B_projection[indices]
 
                 if matrix_types.get(e) == "basis":
-                    # Distance metric (QR)
-                    # Calculate projection onto the current basis M
+                    # QR Mode: Use Relative Residual (Percentage of Novelty)
+                    # This standardizes the score to [0, 1], making it dimensionless and "Scientific".
                     coeffs = b_sub @ M
                     proj = coeffs @ M.T
-
-                    # resid is the vector component perpendicular to the basis (Residual Vector)
-                    # Its norm is the Euclidean distance to the subspace
                     resid = b_sub - proj
-                    g_val = np.linalg.norm(resid, axis=1)
+
+                    dist = np.linalg.norm(resid, axis=1)
+                    norm_b = np.linalg.norm(b_sub, axis=1)
+
+                    # Relative Residual = sin(theta) = dist / norm
+                    # Safe divide
+                    g_val = np.divide(
+                        dist, norm_b, out=np.zeros_like(dist), where=norm_b > 1e-12
+                    )
                 else:
                     # MaxVol metric
                     coeffs = b_sub @ M
@@ -134,6 +144,21 @@ def scan_trajectory_gamma(
 
             # 2. Candidate Selection
             if frame_max_gamma >= cut_min:
+                # 3. Physical Validity Check (Optional)
+                if min_dist is not None:
+                    # Calculate atomic distances (mic=True handles PBC)
+                    all_dists = atoms.get_all_distances(mic=True)
+                    # Mask strict self-distance (diagonal is 0)
+                    np.fill_diagonal(all_dists, np.inf)
+                    actual_min = np.min(all_dists)
+
+                    if actual_min < min_dist:
+                        # Reject this candidate
+                        tqdm.write(
+                            f"  [Skip] Frame {i} Gamma={frame_max_gamma:.4f} but Min Dist={actual_min:.3f} < {min_dist} Å (Unphysical)"
+                        )
+                        continue
+
                 selected_atoms.append(atoms)
                 tqdm.write(
                     f"  [Select] Frame {i}: Max Score = {frame_max_gamma:.6f} (>= {cut_min})"
