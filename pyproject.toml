@@ -12,18 +12,19 @@ dependencies = [
     "tqdm",
     "numpy",
     "jax",
-    "pynep"
+    "pynep",
+    "scikit-learn>=1.8.0",
 ]
 
 [project.scripts]
 learnep = "learnep.cli:app"
 
-[tool.uv]
-package = true
-
 [[tool.uv.index]]
 url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
 default = true
+
+[tool.uv]
+package = true
 
 [tool.setuptools.package-data]
 learnep = ["*.yaml"]

@@ -46,15 +46,10 @@ selection:
   n_max_label: 50
 
   gamma:
-    # MaxVol 模式 (正常迭代, >=1.0)
-    threshold: 0.1
+    # MaxVol 模式 (Gamma >= 1.0)
+    # 动态 PCA 会保证即便在冷启动阶段，Gamma 依然是有效的度量标准
+    threshold: 1.05
     threshold_max: 20.0
-    
-    # QR/Basis 模式 (冷启动, 0.0 ~ 1.0)
-    # 使用相对残差 (Relative Residual)
-    # 0.02 表示该结构包含 2% 的新特征信息 (线性独立成分)
-    qr_threshold: 0.02
-    qr_threshold_max: 0.5
 
 # #############################################################################
 #                          NEP 配置 (Training)

@@ -22,62 +22,32 @@ def scan_trajectory_gamma(
     asi_file,
     gamma_min=None,
     gamma_max=None,
-    qr_threshold=None,
-    qr_threshold_max=None,
     min_dist=None,
-    auto_stop_qr=False,  # Deprecated/Ignored
 ):
     """
-    Sequentially scan trajectory to calculate gamma/residual, filtering candidates.
+    Sequentially scan trajectory to calculate gamma (MaxVol), filtering candidates.
+    Supports Dynamic PCA-MaxVol: Automatically projects descriptors if active set was PCA-reduced.
 
     Args:
         traj: List of Atoms objects
         nep_file: Path to NEP potential
-        asi_file: Path to Active Set Inverse
-        gamma_min: Lower bound for MaxVol selection
-        gamma_max: Safety cut-off for MaxVol
-        qr_threshold: Lower bound for QR/Basis selection (linear independence)
-        qr_threshold_max: Safety cut-off for QR/Basis
+        asi_file: Path to Active Set Inverse (with optional PCA params)
+        gamma_min: Lower bound for selection (default 1.05)
+        gamma_max: Safety cut-off (default 10.0)
         min_dist: Minimum allowed interatomic distance (Angstrom).
-        auto_stop_qr: Deprecated argument, ignored.
 
     Returns:
         selected_atoms: List of atoms fitting criteria.
     """
     calc = NEP(nep_file)
-    active_set_inverse = load_asi(asi_file)
+    active_set_data = load_asi(asi_file)
 
-    # Check Matrix Type
-    matrix_types = {}
-    is_qr_mode = False
-    for e, M in active_set_inverse.items():
-        k = M.shape[1]
-        m = M.shape[0]
-        # Heuristic for Basis (QR) vs Inverse (MaxVol)
-        if k < m:
-            gram = M.T @ M
-            if np.allclose(gram, np.eye(k), atol=1e-4):
-                matrix_types[e] = "basis"
-                is_qr_mode = True
-        else:
-            matrix_types[e] = "inverse"
+    print("Scanning Trajectory (MaxVol Gamma)...")
 
-    print(f"Scanning Gamma (Mode: {'QR/Basis' if is_qr_mode else 'MaxVol/Inverse'})...")
-
-    # Determine thresholds based on mode
-    if is_qr_mode:
-        # Default fallback if not provided
-        cut_min = qr_threshold if qr_threshold is not None else 1e-4
-        cut_safety = qr_threshold_max if qr_threshold_max is not None else 0.5
-        print(
-            f"  [Config] QR Mode: Threshold >= {cut_min}, Safety Cutoff > {cut_safety}"
-        )
-    else:
-        cut_min = gamma_min if gamma_min is not None else 0.05
-        cut_safety = gamma_max if gamma_max is not None else 20.0
-        print(
-            f"  [Config] MaxVol Mode: Threshold >= {cut_min}, Safety Cutoff > {cut_safety}"
-        )
+    # Default thresholds for MaxVol
+    cut_min = gamma_min if gamma_min is not None else 1.05
+    cut_safety = gamma_max if gamma_max is not None else 10.0
+    print(f"  [Config] Threshold >= {cut_min}, Safety Cutoff > {cut_safety}")
 
     if min_dist is not None:
         print(f"  [Config] Physical Check: Min Dist >= {min_dist} Å")
@@ -100,32 +70,38 @@ def scan_trajectory_gamma(
 
             frame_max_gamma = 0.0
 
-            for e, M in active_set_inverse.items():
-                indices = [k for k, s in enumerate(symbols) if s == e]
+            for e_sym in set(symbols):
+                # ASI Data Keys
+                key_asi = e_sym
+                key_std = f"{e_sym}_std"  # Legacy support if any
+                key_pca_comp = f"{e_sym}_pca_comp"
+                key_pca_mean = f"{e_sym}_pca_mean"
+
+                if key_asi not in active_set_data:
+                    continue
+
+                M = active_set_data[key_asi]
+                indices = [k for k, s in enumerate(symbols) if s == e_sym]
                 if not indices:
                     continue
 
                 b_sub = B_projection[indices]
 
-                if matrix_types.get(e) == "basis":
-                    # QR Mode: Use Relative Residual (Percentage of Novelty)
-                    # This standardizes the score to [0, 1], making it dimensionless and "Scientific".
-                    coeffs = b_sub @ M
-                    proj = coeffs @ M.T
-                    resid = b_sub - proj
+                # --- Apply Dynamic PCA Projection if available ---
+                if key_pca_comp in active_set_data and key_pca_mean in active_set_data:
+                    pca_comp = active_set_data[key_pca_comp]  # (k, D)
+                    pca_mean = active_set_data[key_pca_mean]  # (D,)
 
-                    dist = np.linalg.norm(resid, axis=1)
-                    norm_b = np.linalg.norm(b_sub, axis=1)
+                    # Transform: (X - mean) @ Components.T
+                    # Note: sklearn components are (n_comp, n_features).
+                    # b_sub is (n_atoms, n_features).
+                    # Result = (n_atoms, n_comp). matches M is (n_comp, n_comp).
+                    b_sub = np.dot(b_sub - pca_mean, pca_comp.T)
 
-                    # Relative Residual = sin(theta) = dist / norm
-                    # Safe divide
-                    g_val = np.divide(
-                        dist, norm_b, out=np.zeros_like(dist), where=norm_b > 1e-12
-                    )
-                else:
-                    # MaxVol metric
-                    coeffs = b_sub @ M
-                    g_val = np.max(np.abs(coeffs), axis=1)
+                # --- Calculate MaxVol Gamma ---
+                # gamma = norm(b_sub @ M, infinity)
+                coeffs = b_sub @ M
+                g_val = np.max(np.abs(coeffs), axis=1)
 
                 gamma_values[indices] = g_val
                 frame_max_gamma = max(frame_max_gamma, np.max(g_val))
@@ -133,12 +109,12 @@ def scan_trajectory_gamma(
             atoms.arrays["gamma"] = gamma_values
 
             # Show real-time max value in progress bar to help user estimation
-            pbar.set_postfix({"max_val": f"{frame_max_gamma:.2e}"})
+            pbar.set_postfix({"max_val": f"{frame_max_gamma:.2f}"})
 
             # 1. Safety Cut-off (Explosion Detection)
             if frame_max_gamma > cut_safety:
                 tqdm.write(
-                    f"[STOP] Frame {i} Score ({frame_max_gamma:.6f}) exceeded Safety Limit ({cut_safety}). Stopping scan."
+                    f"[STOP] Frame {i} Gamma ({frame_max_gamma:.3f}) exceeded Safety Limit ({cut_safety}). Stopping scan."
                 )
                 break
 
@@ -155,19 +131,18 @@ def scan_trajectory_gamma(
                     if actual_min < min_dist:
                         # Reject this candidate
                         tqdm.write(
-                            f"  [Skip] Frame {i} Gamma={frame_max_gamma:.4f} but Min Dist={actual_min:.3f} < {min_dist} Å (Unphysical)"
+                            f"  [Skip] Frame {i} Gamma={frame_max_gamma:.3f} but Min Dist={actual_min:.3f} < {min_dist} Å"
                         )
                         continue
 
                 selected_atoms.append(atoms)
                 tqdm.write(
-                    f"  [Select] Frame {i}: Max Score = {frame_max_gamma:.6f} (>= {cut_min})"
+                    f"  [Select] Frame {i}: Max Gamma = {frame_max_gamma:.3f} (>= {cut_min})"
                 )
 
     return selected_atoms
 
 
-# ... (Previous get_B_projections and get_active_set) ...
 def get_B_projections(traj, nep_file):
     calc = NEP(nep_file)
     with open(nep_file, "r") as f:
@@ -211,46 +186,96 @@ def get_active_set(
     mode="adaptive",
 ):
     print(f"Performing Selection (Mode: {mode})...")
-    active_set_matrices = {}
+
+    # Store ASI matrices and potentially PCA params
+    active_set_data = {}
     active_set_struct_indices = []
+
+    from sklearn.decomposition import PCA
 
     for e, matrix in B_projections.items():
         if matrix.size == 0:
             continue
 
-        if mode == "adaptive":
-            sampler = AdaptiveMaxVolSampler(nep_path=None, m_dim=matrix.shape[1])
-            N = matrix.shape[0]
-            indices_of_rows = np.arange(N)
-            selected_row_indices = sampler.process_batch(matrix, indices_of_rows)
+        N, D = matrix.shape
 
-            A_sel = matrix[selected_row_indices]
+        # --- Dynamic PCA Logic ---
+        # Phase 1 & 2: N < D -> Reduce dim to N
+        # Phase 3: N >= D -> Full dim
+
+        use_pca = False
+        matrix_processed = matrix
+        pca_model = None
+
+        if N < D:
+            # We want to select "all independent" samples if N < D.
+            # MaxVol on N*N matrix will ideally select everything if full rank.
+            target_dim = N
+            print(
+                f"  [Active Learning] Dynamic PCA Triggered for {e}: Samples({N}) < Features({D}). Reducing to dim={target_dim}."
+            )
+
+            # Require n_components <= min(N, D) = N
+            pca_model = PCA(n_components=target_dim)
+            matrix_processed = pca_model.fit_transform(matrix)  # Shape (N, N)
+
+            variance_ratio = np.sum(pca_model.explained_variance_ratio_)
+            print(f"  [Active Learning] PCA Explained Variance: {variance_ratio:.4%}")
+
+            use_pca = True
+        else:
+            print(
+                f"  [Active Learning] Full Dimension Mode for {e}: Samples({N}) >= Features({D})."
+            )
+
+        # --- Sub-selection ---
+        # If N < D and we reduced to N, usually we keep ALL samples.
+        # But we still run calculate_maxvol/Adaptive to confirm or just invert directly if N is small?
+        # Using the standard flow is safer.
+
+        if mode == "adaptive":
+            sampler = AdaptiveMaxVolSampler(
+                nep_path=None, m_dim=matrix_processed.shape[1]
+            )
+            N_sub = matrix_processed.shape[0]
+            indices_of_rows = np.arange(N_sub)
+            selected_row_indices = sampler.process_batch(
+                matrix_processed, indices_of_rows
+            )
+
+            A_sel = matrix_processed[selected_row_indices]
             struct_idxs = B_projections_struct_index[e][selected_row_indices]
 
             active_set_struct_indices.extend(struct_idxs)
 
-            matrix_to_save = sampler.get_asi_matrix()
-            if matrix_to_save is not None:
-                active_set_matrices[e] = matrix_to_save
-            else:
-                active_set_matrices[e] = np.zeros((matrix.shape[1], 0))
+            # Get Inverse
+            asi_matrix = find_inverse(A_sel)
 
-            print(
-                f"Adaptive Select {e}: {len(selected_row_indices)} features ({sampler.state})"
-            )
+            active_set_data[e] = asi_matrix
+            if use_pca:
+                active_set_data[f"{e}_pca_comp"] = pca_model.components_
+                active_set_data[f"{e}_pca_mean"] = pca_model.mean_
+
+            print(f"    Adaptive Select {e}: {len(selected_row_indices)} features.")
 
         else:
             A_sel, idx_sel_structs = calculate_maxvol(
-                matrix, B_projections_struct_index[e], batch_size=batch_size
+                matrix_processed, B_projections_struct_index[e], batch_size=batch_size
             )
             active_set_struct_indices.extend(idx_sel_structs)
-            active_set_matrices[e] = find_inverse(A_sel)
-            print(f"MaxVol Select {e}: {A_sel.shape}")
+
+            asi_matrix = find_inverse(A_sel)
+            active_set_data[e] = asi_matrix
+            if use_pca:
+                active_set_data[f"{e}_pca_comp"] = pca_model.components_
+                active_set_data[f"{e}_pca_mean"] = pca_model.mean_
+
+            print(f"    MaxVol Select {e}: {A_sel.shape}")
 
     active_structs = sorted(list(set(active_set_struct_indices)))
 
     if write_asi:
-        print(f"Saving active set inverse/basis to {asi_filename}...")
-        save_asi(active_set_matrices, filename=asi_filename)
+        print(f"Saving active set (with auto-PCA state) to {asi_filename}...")
+        save_asi(active_set_data, filename=asi_filename)
 
-    return active_set_matrices, active_structs
+    return active_set_data, active_structs
