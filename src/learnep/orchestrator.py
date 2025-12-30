@@ -13,17 +13,27 @@ from .tasks.gpumd import GPUMDTask
 from .tasks.vasp import VASPTask
 
 # Import JAXVol Logic (Vendored)
-from learnep.jaxvol.tools import (
-    scan_trajectory_gamma,
-    get_B_projections,
-    get_active_set,
-)
 
 
 class LearnEPOrchestrator:
     def __init__(self, config_path: str):
         self.config = Config(config_path)
         self._setup_logger()
+
+        # Configure JAX Platform (Must be done before importing jaxvol)
+        try:
+            import jax
+
+            sel_conf = self.config.data.get("selection", {})
+            device = sel_conf.get("device", "cpu")
+            # If user wants cpu, force it to avoid TPU probing warnings
+            if device.lower() == "cpu":
+                jax.config.update("jax_platform_name", "cpu")
+                # Also hide the probe warning if possible, but platform_name=cpu is usually enough
+            else:
+                jax.config.update("jax_platform_name", device)
+        except ImportError:
+            pass
 
         self.scheduler = JobRunner(self.config.scheduler_config)
         self.nep_task = NEPTask(self.config)
@@ -292,6 +302,13 @@ class LearnEPOrchestrator:
     def _run_selection(
         self, n: int, iter_dir: str, conf: dict, traj_files: list, nep_path: str
     ) -> list:
+        # Lazy import to respect JAX platform config
+        from learnep.jaxvol.tools import (
+            scan_trajectory_gamma,
+            get_B_projections,
+            get_active_set,
+        )
+
         sel_conf = conf["selection"]
         mode = sel_conf.get("mode", "adaptive")
         gamma_conf = sel_conf.get("gamma", {})
