@@ -82,12 +82,9 @@ def calculate_maxvol(
         selected = maxvol(A_joint_jax, gamma_tol, maxvol_iter)
         selected = np.array(selected)
 
-        prev_len = len(A_selected) if A_selected is not None else 0
-
         A_selected = A_joint[selected]
         struct_index_selected = idx_joint[selected]
 
-        n_added = np.sum(selected >= prev_len) if i > 0 else len(selected)
         print(f"Batch {i + 1}/{batch_num}: added/kept {len(selected)} envs.")
 
     # Stage 2: Refinement

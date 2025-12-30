@@ -9,6 +9,15 @@ import jax
 # Enable 64-bit precision globally
 jax.config.update("jax_enable_x64", True)
 
-from .selector import calculate_maxvol, find_inverse
-from .core import maxvol
-from .cli import active, extend, gamma
+from .selector import calculate_maxvol, find_inverse  # noqa: E402
+from .core import maxvol  # noqa: E402
+from .cli import active, extend, gamma  # noqa: E402
+
+__all__ = [
+    "calculate_maxvol",
+    "find_inverse",
+    "maxvol",
+    "active",
+    "extend",
+    "gamma",
+]

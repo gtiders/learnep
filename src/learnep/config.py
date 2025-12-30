@@ -1,6 +1,6 @@
 import yaml
 import copy
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 
 class Config:

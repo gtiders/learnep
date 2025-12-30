@@ -66,7 +66,6 @@ def pivoted_qr_jax(A, max_rank, tol=1e-6):
         # Or Just use argmax.
 
         pivot = jnp.argmax(current_norms)
-        max_val = current_norms[pivot]
 
         # Check tolerance (if max residual is small, we are done/rank deficient)
         # We can't break easily in scan/fori_loop, but we can set a flag or just pick dummy.

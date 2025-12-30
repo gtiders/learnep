@@ -46,7 +46,6 @@ class GPUMDTask:
         )  # Enforce standard name for simplicity
 
         # Read src, write dst (in case it's ASE atoms object later, but now just file copy)
-        import shutil
 
         if os.path.exists(src_struct):
             shutil.copy2(src_struct, dst_struct)

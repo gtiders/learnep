@@ -73,7 +73,7 @@ def scan_trajectory_gamma(
             for e_sym in set(symbols):
                 # ASI Data Keys
                 key_asi = e_sym
-                key_std = f"{e_sym}_std"  # Legacy support if any
+
                 key_pca_comp = f"{e_sym}_pca_comp"
                 key_pca_mean = f"{e_sym}_pca_mean"
 

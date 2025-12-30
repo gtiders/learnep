@@ -3,7 +3,6 @@
 包含基于 JIT 编译的 MaxVol 迭代优化算法，用于在满秩矩阵中寻找最大体积子矩阵。
 """
 
-import jax
 import jax.numpy as jnp
 from jax.scipy.linalg import lu, solve_triangular
 from jax import jit, lax
@@ -24,7 +23,7 @@ def maxvol(A, tol=1.05, max_iters=1000):
     # Initial indices I
     # P is an (N, N) permutation matrix.
     # We select the indices corresponding to the first r rows of the permuted matrix.
-    I = jnp.argmax(P[:, :r], axis=0)
+    I = jnp.argmax(P[:, :r], axis=0)  # noqa: E741
 
     # Compute initial coefficient matrix B
     # B = A @ (A[I])^-1
@@ -44,7 +43,7 @@ def maxvol(A, tol=1.05, max_iters=1000):
         return (iter_num < max_iters) & (max_val > tol)
 
     def body_fun(state):
-        iter_num, B, I, _ = state
+        iter_num, B, I, _ = state  # noqa: E741
 
         # Find element with maximum absolute value
         flat_idx = jnp.argmax(jnp.abs(B))
@@ -53,7 +52,7 @@ def maxvol(A, tol=1.05, max_iters=1000):
         max_val = jnp.abs(B[i, j])
 
         # Update indices I
-        I = I.at[j].set(i)
+        I = I.at[j].set(i)  # noqa: E741
 
         # Sherman-Morrison update for B
         bj = B[:, j]

@@ -26,7 +26,6 @@ JAXVol 命令行工具入口。
 
 import typer
 import jax
-import os
 from typing import Optional
 from typing_extensions import Annotated
 
@@ -100,7 +99,7 @@ def active(
     out_traj = [traj[i] for i in active_structs]
     try:
         dump_nep(output, out_traj)
-    except:
+    except Exception:
         write(output, out_traj)
 
 
@@ -136,12 +135,12 @@ def extend(
     print("Loading datasets...")
     try:
         data1 = load_nep(base_path)
-    except:
+    except Exception:
         data1 = read(base_path, index=":")
 
     try:
         data2 = load_nep(candidate_path)
-    except:
+    except Exception:
         data2 = read(candidate_path, index=":")
 
     data = data1 + data2
@@ -161,7 +160,7 @@ def extend(
     out = [data[i] for i in new_indices]
     try:
         dump_nep(output, out)
-    except:
+    except Exception:
         write(output, out)
 
 
@@ -208,7 +207,7 @@ def gamma(
     print(f"Loading trajectory from {input}...")
     try:
         traj = load_nep(input)
-    except:
+    except Exception:
         traj = read(input, index=":")
 
     out_traj = scan_trajectory_gamma(
@@ -226,7 +225,7 @@ def gamma(
     if output:
         try:
             dump_nep(output, out_traj)
-        except:
+        except Exception:
             write(output, out_traj)
 
 
