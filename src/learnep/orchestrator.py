@@ -323,6 +323,7 @@ class LearnEPOrchestrator:
                 # QR: Relative Residual (0.0 - 1.0)
                 selected = scan_trajectory_gamma(
                     traj,
+                    nep_file=nep_txt,
                     asi_file=asi_path,
                     gamma_min=gamma_conf.get("threshold", 1.05),
                     gamma_max=gamma_conf.get("threshold_max", 20.0),
