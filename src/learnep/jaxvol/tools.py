@@ -90,7 +90,7 @@ def scan_trajectory_gamma(
                 # --- Apply Dynamic PCA Projection if available ---
                 if key_pca_comp in active_set_data and key_pca_mean in active_set_data:
                     pca_comp = active_set_data[key_pca_comp]  # (k, D)
-                    pca_mean = active_set_data[key_pca_mean]  # (D,)
+                    pca_mean = active_set_data[key_pca_mean].flatten()  # (D,)
 
                     # Transform: (X - mean) @ Components.T
                     # Note: sklearn components are (n_comp, n_features).
