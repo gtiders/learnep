@@ -21,6 +21,7 @@
 global:
   work_dir: "./work"
   max_iterations: 50
+  convergence_empty_iters: 3  # 连续 N 轮无候选结构则判定收敛
   log_file: "learnep.log"
   
   initial_input:

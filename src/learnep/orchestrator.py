@@ -83,9 +83,32 @@ class LearnEPOrchestrator:
 
         self.logger.info(f"Starting from Iteration {start_iter}")
 
+        # Convergence tracking
+        consecutive_empty = 0
+        convergence_threshold = self.config.data.get("global", {}).get(
+            "convergence_empty_iters", 3
+        )
+        self.logger.info(
+            f"[Config] Convergence: {convergence_threshold} consecutive empty iterations"
+        )
+
         for n in range(start_iter, self.config.max_iterations):
-            self._run_iteration(n)
+            has_candidates = self._run_iteration(n)
             self._mark_iter_complete(n)
+
+            if has_candidates:
+                consecutive_empty = 0
+            else:
+                consecutive_empty += 1
+                self.logger.info(
+                    f"[Convergence] Empty iteration {consecutive_empty}/{convergence_threshold}"
+                )
+
+                if consecutive_empty >= convergence_threshold:
+                    self.logger.info(
+                        f"[CONVERGED] No candidates selected for {convergence_threshold} consecutive iterations. Stopping."
+                    )
+                    break
 
     def _handle_restart(self, start_n: int):
         """
@@ -110,7 +133,11 @@ class LearnEPOrchestrator:
         self._mark_iter_complete(new_last_completed)
         self.logger.info(f"  Status reset. Last completed: {new_last_completed}")
 
-    def _run_iteration(self, n: int):
+    def _run_iteration(self, n: int) -> bool:
+        """
+        Run a single iteration.
+        Returns True if candidates were selected, False otherwise.
+        """
         self.logger.info(f"\n=== Iteration {n} ===")
         iter_conf = self.config.get_iteration_config(n)
         iter_dir = os.path.join(self.work_dir, f"iter_{n:03d}")
@@ -136,7 +163,7 @@ class LearnEPOrchestrator:
             )
             # Prepare next iter anyway (just forward model) to keep loop alive or allow manual check
             self._prep_next_from_paths(iter_dir, nep_model_path)
-            return
+            return False  # No candidates
 
         # Save candidates to file
         for cand in candidates:
@@ -152,6 +179,8 @@ class LearnEPOrchestrator:
 
         # 6. Update (Merge Data & Prep Next)
         self._run_update(n, iter_dir, new_data, nep_model_path)
+
+        return True  # Candidates were found and processed
 
     def _prepare_iteration_data(self, n: int, iter_dir: str, conf: dict):
         os.makedirs(iter_dir, exist_ok=True)
