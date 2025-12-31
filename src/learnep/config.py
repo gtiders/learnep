@@ -1,6 +1,9 @@
 import yaml
 import copy
+import logging
 from typing import Dict, Any
+
+logger = logging.getLogger("learnep.config")
 
 
 class Config:
@@ -67,7 +70,7 @@ class Config:
             target_iterations = rule.get("iterations", [])
 
             if iter_num in target_iterations:
-                print(f"[Config] Applying override for iteration {iter_num}...")
+                logger.info(f"[Config] Applying override for iteration {iter_num}...")
                 self._recursive_update(current_config, rule)
 
         return current_config

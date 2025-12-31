@@ -1,7 +1,6 @@
 import os
 import json
 import shutil
-import glob
 import numpy as np
 import logging
 from ase.io import read, write
@@ -484,15 +483,13 @@ class LearnEPOrchestrator:
         if os.path.exists(train_path):
             shutil.copy2(train_path, os.path.join(next_iter_dir, "train.xyz"))
 
-        # 3. ASI files (at iter_dir root)
-        for asi in glob.glob(os.path.join(iter_dir, "*.asi")):
-            shutil.copy2(asi, os.path.join(next_iter_dir, os.path.basename(asi)))
+        # Note: ASI files are NOT copied as they are regenerated each iteration from train.xyz
 
     def _get_last_completed_iter(self):
         try:
             with open(os.path.join(self.work_dir, "status.json"), "r") as f:
                 return json.load(f).get("last_completed", -1)
-        except:  # noqa: E722
+        except Exception:
             return -1
 
     def _mark_iter_complete(self, n):

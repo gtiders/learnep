@@ -4,9 +4,12 @@ MaxVol 高层选择器接口。
 用于处理大规模数据集。
 """
 
+import logging
 import numpy as np
 import jax.numpy as jnp
 from .core import maxvol
+
+logger = logging.getLogger("learnep.jaxvol.selector")
 
 
 def find_inverse(m):
@@ -59,7 +62,7 @@ def calculate_maxvol(
         return A[selected_indices], struct_index[selected_indices]
 
     # --- Case 2: Large Dataset (Batch Processing) ---
-    print(f"Processing in batches of size {batch_size}...")
+    logger.info(f"Processing in batches of size {batch_size}...")
 
     batch_num = int(np.ceil(N / batch_size))
     batch_splits = np.array_split(np.arange(N), batch_num)
@@ -68,7 +71,7 @@ def calculate_maxvol(
     struct_index_selected = None
 
     # Stage 1: Cumulative MaxVol
-    print("Stage 1: Cumulative Selection")
+    logger.info("Stage 1: Cumulative Selection")
     for i, idxs in enumerate(batch_splits):
         if A_selected is None:
             A_joint = A[idxs]
@@ -85,12 +88,12 @@ def calculate_maxvol(
         A_selected = A_joint[selected]
         struct_index_selected = idx_joint[selected]
 
-        print(f"Batch {i + 1}/{batch_num}: added/kept {len(selected)} envs.")
+        logger.info(f"Batch {i + 1}/{batch_num}: added/kept {len(selected)} envs.")
 
     # Stage 2: Refinement
     # Check if any structures in the full pool have high extrapolation grade (gamma)
     # relative to the currently selected set, and add them if so.
-    print("Stage 2: Refinement")
+    logger.info("Stage 2: Refinement")
 
     for ii in range(n_refinement):
         # Calculate inverse of current active set
@@ -125,17 +128,17 @@ def calculate_maxvol(
             if len(bad_locs) > 0:
                 violator_indices.append(bad_locs + b_start)
 
-        print(f"Refinement round {ii + 1}: Max gamma = {max_gamma_found:.4f}")
+        logger.info(f"Refinement round {ii + 1}: Max gamma = {max_gamma_found:.4f}")
 
         if max_gamma_found <= gamma_tol:
-            print("Refinement converged.")
+            logger.info("Refinement converged.")
             break
 
         if not violator_indices:
             break
 
         all_violators = np.concatenate(violator_indices)
-        print(
+        logger.info(
             f"  Found {len(all_violators)} structures with gamma > {gamma_tol}. Re-optimizing..."
         )
 

@@ -68,4 +68,5 @@ class GPUMDTask:
             p = os.path.join(work_dir, c)
             if os.path.exists(p):
                 return p
+        self.logger.warning(f"[GPUMD] No trajectory file found in {work_dir}")
         return None
