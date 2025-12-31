@@ -212,6 +212,27 @@ class LearnEPOrchestrator:
         root_model = os.path.join(iter_dir, "nep.txt")
         root_restart = os.path.join(iter_dir, "nep.restart")
 
+        # --- DFT-First Mode Detection ---
+        # At Iteration 0, if train.xyz has no forces (or all zeros) AND no nep.txt,
+        # we need to label the structures via DFT first.
+        if n == 0 and os.path.exists(root_train) and not os.path.exists(root_model):
+            if self._needs_dft_labeling(root_train):
+                self.logger.info(
+                    "[DFT-First Mode] train.xyz has no valid forces. Running DFT labeling..."
+                )
+                unlabeled = read(root_train, index=":")
+                labeled = self._run_label(n, iter_dir, conf, unlabeled)
+
+                if labeled:
+                    write(root_train, labeled)
+                    self.logger.info(
+                        f"[DFT-First Mode] Labeled {len(labeled)} structures. Updated train.xyz."
+                    )
+                else:
+                    raise RuntimeError(
+                        "[DFT-First Mode] DFT labeling failed. No labeled structures returned."
+                    )
+
         # Copy files to sub-dir
         if os.path.exists(root_train):
             shutil.copy2(root_train, os.path.join(nep_work_dir, "train.xyz"))
@@ -245,8 +266,6 @@ class LearnEPOrchestrator:
 
         # User Request: Timeout
         timeout = conf["nep"].get("timeout", None)  # Default None or set default?
-        # If user says "no limit on wait time", we add one?
-        # User said "seems no limit on wait time". We should add one.
         if timeout is None:
             timeout = 86400 * 3  # 3 days default safety
 
@@ -257,6 +276,27 @@ class LearnEPOrchestrator:
             raise RuntimeError(f"Training failed in iter {n}")
 
         return model_path
+
+    def _needs_dft_labeling(self, train_path: str) -> bool:
+        """
+        Check if train.xyz needs DFT labeling.
+        Returns True if:
+          - No 'forces' key in atoms.arrays, OR
+          - All forces are exactly zero.
+        """
+        try:
+            atoms_list = read(train_path, index=":")
+            for atoms in atoms_list:
+                if "forces" not in atoms.arrays:
+                    return True
+                forces = atoms.arrays["forces"]
+                # Check if all forces are zero
+                if np.allclose(forces, 0.0):
+                    return True
+            return False
+        except Exception as e:
+            self.logger.warning(f"Error checking forces in {train_path}: {e}")
+            return True  # Conservative: assume needs labeling on error
 
     def _run_explore(self, n: int, iter_dir: str, conf: dict, nep_path: str):
         conditions = conf["gpumd"]["conditions"]

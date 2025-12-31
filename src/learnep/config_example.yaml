@@ -25,8 +25,11 @@ global:
   
   initial_input:
     train_data: "train.xyz"
-    nep_model: "nep.txt"          # (可选)
-    nep_restart: "nep.restart"    # (可选)
+    # nep_model 和 nep_restart 是可选的。
+    # 如果只提供 train_data 且其中结构没有力信息（或力全为 0），
+    # 系统将自动进入 DFT-First 模式：先调用 VASP 标注数据，再进行首次训练。
+    nep_model: "nep.txt"          # (可选) 若提供, 跳过首次训练
+    nep_restart: "nep.restart"    # (可选) 用于热启动
 
   scheduler:
     type: "pbs"

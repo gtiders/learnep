@@ -4,11 +4,14 @@ NEP 势函数专用工具集。
 与计算材料学具体应用场景相关的逻辑。
 """
 
+import logging
 import numpy as np
 from tqdm import tqdm
 from .selector import calculate_maxvol, find_inverse
 from .asi import save_asi, load_asi
 from .adaptive import AdaptiveMaxVolSampler
+
+logger = logging.getLogger("learnep.jaxvol")
 
 try:
     from pynep.calculate import NEP
@@ -42,15 +45,15 @@ def scan_trajectory_gamma(
     calc = NEP(nep_file)
     active_set_data = load_asi(asi_file)
 
-    print("Scanning Trajectory (MaxVol Gamma)...")
+    logger.info("Scanning Trajectory (MaxVol Gamma)...")
 
     # Default thresholds for MaxVol
     cut_min = gamma_min if gamma_min is not None else 1.05
     cut_safety = gamma_max if gamma_max is not None else 10.0
-    print(f"  [Config] Threshold >= {cut_min}, Safety Cutoff > {cut_safety}")
+    logger.info(f"  [Config] Threshold >= {cut_min}, Safety Cutoff > {cut_safety}")
 
     if min_dist is not None:
-        print(f"  [Config] Physical Check: Min Dist >= {min_dist} Å")
+        logger.info(f"  [Config] Physical Check: Min Dist >= {min_dist} Å")
 
     selected_atoms = []
 
@@ -62,7 +65,9 @@ def scan_trajectory_gamma(
                 calc.calculate(atoms, ["B_projection"])
                 B_projection = calc.results["B_projection"]
             except Exception as e:
-                tqdm.write(f"  [Error] Failed to calc B_projection for frame {i}: {e}")
+                logger.warning(
+                    f"  [Error] Failed to calc B_projection for frame {i}: {e}"
+                )
                 continue
 
             gamma_values = np.zeros(len(atoms))
@@ -113,7 +118,7 @@ def scan_trajectory_gamma(
 
             # 1. Safety Cut-off (Explosion Detection)
             if frame_max_gamma > cut_safety:
-                tqdm.write(
+                logger.warning(
                     f"[STOP] Frame {i} Gamma ({frame_max_gamma:.3f}) exceeded Safety Limit ({cut_safety}). Stopping scan."
                 )
                 break
@@ -130,13 +135,13 @@ def scan_trajectory_gamma(
 
                     if actual_min < min_dist:
                         # Reject this candidate
-                        tqdm.write(
+                        logger.debug(
                             f"  [Skip] Frame {i} Gamma={frame_max_gamma:.3f} but Min Dist={actual_min:.3f} < {min_dist} Å"
                         )
                         continue
 
                 selected_atoms.append(atoms)
-                tqdm.write(
+                logger.info(
                     f"  [Select] Frame {i}: Max Gamma = {frame_max_gamma:.3f} (>= {cut_min})"
                 )
 
@@ -152,7 +157,7 @@ def get_B_projections(traj, nep_file):
     B_projections = {e: [] for e in elements}
     B_projections_struct_index = {e: [] for e in elements}
 
-    print("Calculating B projections...")
+    logger.info("Calculating B projections...")
     for idx, atoms in enumerate(tqdm(traj, desc="Processing")):
         calc.calculate(atoms, ["B_projection"])
         B_res = calc.results["B_projection"]
@@ -185,7 +190,7 @@ def get_active_set(
     asi_filename="active_set.asi",
     mode="adaptive",
 ):
-    print(f"Performing Selection (Mode: {mode})...")
+    logger.info(f"Performing Selection (Mode: {mode})...")
 
     # Store ASI matrices and potentially PCA params
     active_set_data = {}
@@ -211,8 +216,8 @@ def get_active_set(
             # We want to select "all independent" samples if N < D.
             # MaxVol on N*N matrix will ideally select everything if full rank.
             target_dim = N
-            print(
-                f"  [Active Learning] Dynamic PCA Triggered for {e}: Samples({N}) < Features({D}). Reducing to dim={target_dim}."
+            logger.info(
+                f"  [Active Learning] Rank DEFICIENT for {e}: Samples({N}) < Features({D}). Applying Dynamic PCA to dim={target_dim}."
             )
 
             # Require n_components <= min(N, D) = N
@@ -220,12 +225,14 @@ def get_active_set(
             matrix_processed = pca_model.fit_transform(matrix)  # Shape (N, N)
 
             variance_ratio = np.sum(pca_model.explained_variance_ratio_)
-            print(f"  [Active Learning] PCA Explained Variance: {variance_ratio:.4%}")
+            logger.info(
+                f"  [Active Learning] PCA Explained Variance: {variance_ratio:.4%}"
+            )
 
             use_pca = True
         else:
-            print(
-                f"  [Active Learning] Full Dimension Mode for {e}: Samples({N}) >= Features({D})."
+            logger.info(
+                f"  [Active Learning] Rank FULL for {e}: Samples({N}) >= Features({D}). Full Dimension MaxVol."
             )
 
         # --- Sub-selection ---
@@ -256,7 +263,9 @@ def get_active_set(
                 active_set_data[f"{e}_pca_comp"] = pca_model.components_
                 active_set_data[f"{e}_pca_mean"] = pca_model.mean_
 
-            print(f"    Adaptive Select {e}: {len(selected_row_indices)} features.")
+            logger.info(
+                f"    Adaptive Select {e}: {len(selected_row_indices)} features."
+            )
 
         else:
             A_sel, idx_sel_structs = calculate_maxvol(
@@ -270,12 +279,12 @@ def get_active_set(
                 active_set_data[f"{e}_pca_comp"] = pca_model.components_
                 active_set_data[f"{e}_pca_mean"] = pca_model.mean_
 
-            print(f"    MaxVol Select {e}: {A_sel.shape}")
+            logger.info(f"    MaxVol Select {e}: {A_sel.shape}")
 
     active_structs = sorted(list(set(active_set_struct_indices)))
 
     if write_asi:
-        print(f"Saving active set (with auto-PCA state) to {asi_filename}...")
+        logger.info(f"Saving active set (with auto-PCA state) to {asi_filename}...")
         save_asi(active_set_data, filename=asi_filename)
 
     return active_set_data, active_structs
