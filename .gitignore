@@ -1,5 +1,4 @@
 .venv
 *.egg-info
 __pycache__
-test
-nep_extrapolation
+test/
