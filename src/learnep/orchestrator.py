@@ -310,22 +310,49 @@ class LearnEPOrchestrator:
     def _needs_dft_labeling(self, train_path: str) -> bool:
         """
         Check if train.xyz needs DFT labeling.
-        Returns True if:
-          - No 'forces' key in atoms.arrays, OR
-          - All forces are exactly zero.
+        Returns True if ANY structure has:
+          - No 'forces' key in atoms.arrays, OR all forces are zero
+          - No 'energy' key in atoms.info, OR energy is zero
         """
         try:
             atoms_list = read(train_path, index=":")
-            for atoms in atoms_list:
-                if "forces" not in atoms.arrays:
-                    return True
-                forces = atoms.arrays["forces"]
-                # Check if all forces are zero
-                if np.allclose(forces, 0.0):
-                    return True
-            return False
+            self.logger.info(
+                f"[Validation] Checking {len(atoms_list)} structures in {train_path}..."
+            )
+
+            needs_labeling = False
+            for i, atoms in enumerate(atoms_list):
+                # Check forces
+                has_forces = "forces" in atoms.arrays
+                forces_valid = False
+                if has_forces:
+                    forces = atoms.arrays["forces"]
+                    forces_valid = not np.allclose(forces, 0.0)
+
+                # Check energy
+                has_energy = "energy" in atoms.info
+                energy_valid = False
+                if has_energy:
+                    energy = atoms.info["energy"]
+                    energy_valid = not np.isclose(energy, 0.0)
+
+                if not forces_valid or not energy_valid:
+                    self.logger.warning(
+                        f"[Validation] Structure {i}: forces_valid={forces_valid}, energy_valid={energy_valid}"
+                    )
+                    needs_labeling = True
+
+            if needs_labeling:
+                self.logger.info("[Validation] Some structures need DFT labeling.")
+            else:
+                self.logger.info(
+                    "[Validation] All structures have valid forces and energy."
+                )
+
+            return needs_labeling
+
         except Exception as e:
-            self.logger.warning(f"Error checking forces in {train_path}: {e}")
+            self.logger.warning(f"Error checking data in {train_path}: {e}")
             return True  # Conservative: assume needs labeling on error
 
     def _run_explore(self, n: int, iter_dir: str, conf: dict, nep_path: str):
@@ -499,12 +526,33 @@ class LearnEPOrchestrator:
     def _run_update(self, n: int, iter_dir: str, new_data: list, nep_path: str):
         train_path = os.path.join(iter_dir, "train.xyz")
 
-        # Append
+        # Read existing data
         existing = read(train_path, index=":") if os.path.exists(train_path) else []
-        combined = existing + new_data
-        write(train_path, combined)  # update in place for this iter
 
-        self.logger.info(f"Updated train.xyz: {len(existing)} -> {len(combined)}")
+        # Filter new_data to ensure all have valid forces and energy
+        valid_new = []
+        for atoms in new_data:
+            has_forces = "forces" in atoms.arrays and not np.allclose(
+                atoms.arrays["forces"], 0.0
+            )
+            has_energy = "energy" in atoms.info and not np.isclose(
+                atoms.info["energy"], 0.0
+            )
+            if has_forces and has_energy:
+                valid_new.append(atoms)
+
+        if len(valid_new) < len(new_data):
+            self.logger.warning(
+                f"[Update] Filtered out {len(new_data) - len(valid_new)} invalid structures from new data"
+            )
+
+        # Append valid new data
+        combined = existing + valid_new
+        write(train_path, combined)
+
+        self.logger.info(
+            f"[Update] train.xyz: {len(existing)} existing + {len(valid_new)} new = {len(combined)} total"
+        )
 
         # Prep Next Iter
         self._prep_next_from_paths(iter_dir, nep_path)

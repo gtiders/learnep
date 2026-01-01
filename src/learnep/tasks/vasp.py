@@ -57,10 +57,15 @@ class VASPTask:
     def collect_results(self, work_dir: str) -> list:
         """
         Collect results from all subdirectories.
-        Returns list of ASE Atoms with calculator results attached.
+        Returns list of ASE Atoms with forces/energy in arrays/info.
+        Filters out structures without valid forces or energy.
         """
+        import numpy as np
+
         results = []
-        # sort dirs
+        failed_count = 0
+        invalid_count = 0
+
         if not os.path.exists(work_dir):
             self.logger.warning(
                 f"[VASP] Work dir {work_dir} needed for collection but not found."
@@ -68,24 +73,85 @@ class VASPTask:
             return []
 
         subdirs = sorted([d for d in os.listdir(work_dir) if d.startswith("calc_")])
+        self.logger.info(
+            f"[VASP] Collecting results from {len(subdirs)} calculations..."
+        )
 
         for d in subdirs:
             full_path = os.path.join(work_dir, d)
-            # Try read OUTCAR or vasprun.xml
             try:
                 # vasprun.xml is preferred for precision
                 xml = os.path.join(full_path, "vasprun.xml")
                 outcar = os.path.join(full_path, "OUTCAR")
 
+                atoms = None
+                source = None
                 if os.path.exists(xml):
                     atoms = read(xml)
-                    results.append(atoms)
+                    source = "vasprun.xml"
                 elif os.path.exists(outcar):
                     atoms = read(outcar)
-                    results.append(atoms)
+                    source = "OUTCAR"
                 else:
                     self.logger.warning(f"[VASP] No output found in {d}")
+                    failed_count += 1
+                    continue
+
+                # Extract forces and energy from calculator if present
+                forces = None
+                energy = None
+
+                # Try to get from calculator first
+                if atoms.calc is not None:
+                    try:
+                        forces = atoms.calc.get_forces()
+                    except Exception:
+                        pass
+                    try:
+                        energy = atoms.calc.get_potential_energy()
+                    except Exception:
+                        pass
+
+                # Fallback to arrays/info if calculator didn't provide
+                if forces is None and "forces" in atoms.arrays:
+                    forces = atoms.arrays["forces"]
+                if energy is None and "energy" in atoms.info:
+                    energy = atoms.info["energy"]
+
+                # Validate forces and energy
+                has_valid_forces = forces is not None and not np.allclose(forces, 0.0)
+                has_valid_energy = energy is not None and not np.isclose(energy, 0.0)
+
+                if not has_valid_forces or not has_valid_energy:
+                    self.logger.warning(
+                        f"[VASP] {d}: Invalid data - forces_valid={has_valid_forces}, energy_valid={has_valid_energy}"
+                    )
+                    invalid_count += 1
+                    continue
+
+                # Ensure forces and energy are in arrays/info for extxyz write
+                atoms.arrays["forces"] = forces
+                atoms.info["energy"] = energy
+
+                # Also store stress if available
+                if atoms.calc is not None:
+                    try:
+                        stress = atoms.calc.get_stress()
+                        if stress is not None:
+                            atoms.info["stress"] = stress
+                    except Exception:
+                        pass
+
+                results.append(atoms)
+                self.logger.debug(
+                    f"[VASP] {d}: OK from {source} - E={energy:.4f} eV, max|F|={np.max(np.abs(forces)):.4f} eV/Å"
+                )
+
             except Exception as e:
                 self.logger.error(f"[VASP] Failed to parse {d}: {e}")
+                failed_count += 1
 
+        self.logger.info(
+            f"[VASP] Collection complete: {len(results)} valid, {invalid_count} invalid, {failed_count} failed"
+        )
         return results
