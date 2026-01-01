@@ -3,6 +3,8 @@ import json
 import shutil
 import numpy as np
 import logging
+import re
+from collections import defaultdict
 from ase.io import read, write
 
 from .config import Config
@@ -149,11 +151,11 @@ class LearnEPOrchestrator:
         nep_model_path = self._run_train(n, iter_dir, iter_conf)
 
         # 3. Exploration (GPUMD)
-        traj_files = self._run_explore(n, iter_dir, iter_conf, nep_model_path)
+        traj_map = self._run_explore(n, iter_dir, iter_conf, nep_model_path)
 
         # 4. Selection (JaxVol)
         candidates = self._run_selection(
-            n, iter_dir, iter_conf, traj_files, nep_model_path
+            n, iter_dir, iter_conf, traj_map, nep_model_path
         )
 
         if not candidates:
@@ -335,7 +337,7 @@ class LearnEPOrchestrator:
             os.makedirs(explore_dir)
 
         job_map = {}
-        traj_files = []
+        traj_map = {}  # Map cond_id -> traj_path
 
         for cond in conditions:
             cond_id = cond["id"]
@@ -360,15 +362,24 @@ class LearnEPOrchestrator:
         self.scheduler.wait_jobs(job_map, timeout=timeout)
 
         # Collect trajectories
-        for c_dir in job_map.values():
+        for jid, c_dir in job_map.items():
+            # Reverse map c_dir to cond_id? Or just store cond_id in job_map?
+            # Better to loop over conditions again or store logic.
+            # job_map was {jid: c_dir}. Let's just re-iterate conditions effectively.
+            # Actually, let's just loop over conditions again since we know their paths.
+            pass
+
+        for cond in conditions:
+            cond_id = cond["id"]
+            c_dir = os.path.join(explore_dir, cond_id)
             t = self.gpumd_task.get_trajectory_path(c_dir)
             if t:
-                traj_files.append(t)
+                traj_map[cond_id] = t
 
-        return traj_files
+        return traj_map
 
     def _run_selection(
-        self, n: int, iter_dir: str, conf: dict, traj_files: list, nep_path: str
+        self, n: int, iter_dir: str, conf: dict, traj_map: dict, nep_path: str
     ) -> list:
         # Lazy import to respect JAX platform config
         from learnep.jaxvol.tools import (
@@ -400,7 +411,12 @@ class LearnEPOrchestrator:
 
         # Scan Trajectories
         candidates = []
-        for t_file in traj_files:
+        temp_counts = defaultdict(int)
+
+        # Helper to find config for cond_id
+        cond_config_map = {c["id"]: c for c in conf["gpumd"]["conditions"]}
+
+        for cond_id, t_file in traj_map.items():
             try:
                 traj = read(t_file, index=":")
 
@@ -415,8 +431,36 @@ class LearnEPOrchestrator:
                     min_dist=sel_conf.get("min_dist", None),
                 )
                 candidates.extend(selected)
+
+                # Track Temperature Source
+                c_conf = cond_config_map.get(cond_id, {})
+                run_in_txt = c_conf.get("run_in", "")
+                # Try to parse "ensemble nvt_ber T ..."
+                # Regex for "ensemble ... T ..."
+                # Pattern: ensemble (nvt_ber|npt_ber) T_start T_end T_damp ...
+                # We usually care about T or T_end. Let's just grab the first number involved.
+                # Example: "ensemble nvt_ber 300 1000 100" -> 300
+                temp_match = re.search(r"ensemble\s+\w+\s+(\d+)", run_in_txt)
+                temp = "Unknown"
+                if temp_match:
+                    temp = f"{temp_match.group(1)}K"
+
+                temp_counts[temp] += len(selected)
+
             except Exception as e:
                 self.logger.error(f"Scanning {t_file} failed: {e}")
+
+        # Log Selection Statistics by Temperature
+        if temp_counts:
+            stats_msg = "\n[Selection] Candidate Sources by Temperature:"
+            # Sort by temperature if possible (parse K)
+            sorted_temps = sorted(
+                temp_counts.keys(),
+                key=lambda x: int(x[:-1]) if x[:-1].isdigit() else 99999,
+            )
+            for t in sorted_temps:
+                stats_msg += f"\n  - {t}: {temp_counts[t]} structures"
+            self.logger.info(stats_msg + "\n")
 
         if not candidates:
             return []
