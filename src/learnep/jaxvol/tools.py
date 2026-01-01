@@ -141,9 +141,9 @@ def scan_trajectory_gamma(
                         continue
 
                 selected_atoms.append(atoms)
-                logger.info(
-                    f"  [Select] Frame {i}: Max Gamma = {frame_max_gamma:.3f} (>= {cut_min})"
-                )
+                # logger.info(
+                #     f"  [Select] Frame {i}: Max Gamma = {frame_max_gamma:.3f} (>= {cut_min})"
+                # )
 
     return selected_atoms
 
