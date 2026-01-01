@@ -142,6 +142,10 @@ class VASPTask:
                     except Exception:
                         pass
 
+                # Detach calculator to prevent issues during write (e.g. extxyz trying to use it)
+                # We already extracted what we need (forces, energy, stress)
+                atoms.calc = None
+
                 results.append(atoms)
                 self.logger.debug(
                     f"[VASP] {d}: OK from {source} - E={energy:.4f} eV, max|F|={np.max(np.abs(forces)):.4f} eV/Å"
