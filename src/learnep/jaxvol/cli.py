@@ -19,7 +19,6 @@ JAXVol 命令行工具入口。
 3. gamma (外推计算):
    计算给定轨迹中每个构型的外推等级 (Gamma)，并筛选出高风险/高新颖性构型。
    需配合已生成的 active_set.asi 文件使用。
-   支持自动截断（上限爆炸检测）和自动终止（QR 模式下分数稳定停止）。
    示例：
      python -m jaxvol.cli gamma --input md_trajectory.xyz --threshold 1.0 --output high_gamma.xyz
 """
@@ -179,12 +178,6 @@ def gamma(
         Optional[float],
         typer.Option(help="Max Gamma cutoff (Stops scanning if exceeded)"),
     ] = None,
-    auto_stop: Annotated[
-        bool, typer.Option(help="Enable statistical auto-stopping in QR mode")
-    ] = False,
-    std_tol: Annotated[
-        float, typer.Option(help="Std Dev tolerance for auto-stop")
-    ] = 1e-4,
     device: Annotated[
         Optional[str], typer.Option(help="Force JAX device (cpu/gpu)")
     ] = None,
@@ -216,8 +209,6 @@ def gamma(
         asi_file=asi_path,
         gamma_min=threshold,
         gamma_max=threshold_max,
-        auto_stop_qr=auto_stop,
-        std_tol=std_tol,
     )
 
     print(f"Selected {len(out_traj)} structures fitting steps.")

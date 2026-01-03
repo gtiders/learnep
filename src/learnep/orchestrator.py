@@ -492,13 +492,82 @@ class LearnEPOrchestrator:
         if not candidates:
             return []
 
-        # Sort by Gamma (Highest Score = Most Info)
-        candidates.sort(key=lambda x: max(x.arrays.get("gamma", [0])), reverse=True)
+        # --- Improved Selection Strategy: MaxVol Sub-selection + Random Fallback ---
+        # 1. Deduplication using MaxVol (Candidate Resampling)
+        # Combine Train + Candidates to ensure we only pick candidates that add new information relative to Train
 
+        self.logger.info(f"Initial candidates (High Gamma): {len(candidates)}")
+
+        if not candidates:
+            return []
+
+        # Read Train Data again (or reuse train_atoms if available and safe)
+        # To be safe and stateless, we reconstruct the list.
+        # But wait, earlier we read train_atoms (L428). Is it still in memory/scope?
+        # L428: train_atoms = read(train_xyz, index=":") -> It is in scope if L428 executed?
+        # Yes, L428 is inside try-catch block.
+        # Let's re-read to be absolutely safe or structure the code to ensure access.
+        try:
+            train_atoms = read(train_xyz, index=":")
+        except Exception:
+            train_atoms = []
+
+        combined_data = train_atoms + candidates
+        n_train = len(train_atoms)
+        self.logger.info(
+            f"Performing MaxVol Sub-selection on {n_train} existing + {len(candidates)} candidates..."
+        )
+
+        try:
+            # We need B Projections for the combined set to rerun MaxVol
+            B_comb, B_idx_comb = get_B_projections(combined_data, nep_txt)
+
+            # Run MaxVol selection (no writing ASI, just get indices)
+            # This corresponds to the 'extend' logic
+            _, selected_indices_comb = get_active_set(
+                B_comb, B_idx_comb, write_asi=False, mode=mode
+            )
+
+            # Filter: Keep only indices that belong to 'candidates' part
+            # convert to set for O(1) lookup
+            selected_set = set(selected_indices_comb)
+
+            # Candidates start from index n_train
+            final_candidates = []
+            for i in range(len(candidates)):
+                global_idx = n_train + i
+                if global_idx in selected_set:
+                    final_candidates.append(candidates[i])
+
+            self.logger.info(
+                f"MaxVol retained {len(final_candidates)} non-redundant candidates (from {len(candidates)})."
+            )
+
+        except Exception as e:
+            self.logger.error(
+                f"MaxVol Sub-selection failed: {e}. Falling back to raw candidates."
+            )
+            final_candidates = candidates
+
+        # 2. Random Sampling (if still too many)
         n_max = sel_conf.get("n_max_label", 50)
-        self.logger.info(f"Selected {len(candidates)} candidates. Keeping top {n_max}.")
 
-        return candidates[:n_max]
+        if len(final_candidates) > n_max:
+            import random
+
+            self.logger.info(
+                f"Count ({len(final_candidates)}) > limit ({n_max}). Applying Random Sampling..."
+            )
+            random_seed = sel_conf.get("seed", 42)
+            random.seed(random_seed)
+            final_candidates = random.sample(final_candidates, n_max)
+            self.logger.info(f"Randomly selected {len(final_candidates)} candidates.")
+        else:
+            self.logger.info(
+                f"Count ({len(final_candidates)}) <= limit ({n_max}). Keeping all."
+            )
+
+        return final_candidates
 
     def _run_label(self, n: int, iter_dir: str, conf: dict, candidates: list):
         label_dir = os.path.join(iter_dir, "labeling")
