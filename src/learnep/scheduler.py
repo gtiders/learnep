@@ -35,18 +35,33 @@ class JobRunner:
                 f.write("\n\n# Auto-injected by LearnEP\ntouch DONE\n")
 
         # Prepare command
-        # Support both {script} and manual format
-        if "{script}" in self.submit_cmd:
-            cmd_str = self.submit_cmd.format(script=os.path.basename(script_path))
-        else:
-            cmd_str = f"{self.submit_cmd} {os.path.basename(script_path)}"
+        # Support placeholders: {script}, {cwd}
+        script_name = os.path.basename(script_path)
+        abs_work_dir = os.path.abspath(work_dir)
 
-        self.logger.info(f"Submitting: {cmd_str} in {work_dir}")
+        cmd_str = self.submit_cmd
+        if "{script}" in cmd_str:
+            cmd_str = cmd_str.replace("{script}", script_name)
+        else:
+            cmd_str = f"{cmd_str} {script_name}"
+
+        if "{cwd}" in cmd_str:
+            cmd_str = cmd_str.replace("{cwd}", abs_work_dir)
+
+        # Check if {cwd} was used - if so, the command handles directory itself
+        use_local_cwd = "{cwd}" not in self.submit_cmd
+
+        self.logger.info(
+            f"Submitting: {cmd_str}" + (f" in {work_dir}" if use_local_cwd else "")
+        )
         try:
             # Run submission
             result = (
                 subprocess.check_output(
-                    cmd_str, shell=True, cwd=work_dir, stderr=subprocess.STDOUT
+                    cmd_str,
+                    shell=True,
+                    cwd=work_dir if use_local_cwd else None,
+                    stderr=subprocess.STDOUT,
                 )
                 .decode("utf-8")
                 .strip()
