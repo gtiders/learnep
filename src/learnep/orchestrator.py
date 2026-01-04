@@ -251,7 +251,8 @@ class LearnEPOrchestrator:
                     "[DFT-First Mode] train.xyz has no valid forces. Running DFT labeling..."
                 )
                 unlabeled = read(root_train, index=":")
-                labeled = self._run_label(n, iter_dir, conf, unlabeled)
+                # Use separate directory for initial DFT labeling to avoid conflict with candidate labeling
+                labeled = self._run_label(n, iter_dir, conf, unlabeled, label_subdir="labeling_init")
 
                 if labeled:
                     write(root_train, labeled)
@@ -569,8 +570,8 @@ class LearnEPOrchestrator:
 
         return final_candidates
 
-    def _run_label(self, n: int, iter_dir: str, conf: dict, candidates: list):
-        label_dir = os.path.join(iter_dir, "labeling")
+    def _run_label(self, n: int, iter_dir: str, conf: dict, candidates: list, label_subdir: str = "labeling"):
+        label_dir = os.path.join(iter_dir, label_subdir)
         vasp_conf = conf["vasp"]
 
         job_tmpl = vasp_conf["job_script"].replace("{iter}", str(n))
