@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import shutil
 import numpy as np
@@ -252,7 +253,9 @@ class LearnEPOrchestrator:
                 )
                 unlabeled = read(root_train, index=":")
                 # Use separate directory for initial DFT labeling to avoid conflict with candidate labeling
-                labeled = self._run_label(n, iter_dir, conf, unlabeled, label_subdir="labeling_init")
+                labeled = self._run_label(
+                    n, iter_dir, conf, unlabeled, label_subdir="labeling_init"
+                )
 
                 if labeled:
                     write(root_train, labeled)
@@ -357,6 +360,10 @@ class LearnEPOrchestrator:
             return True  # Conservative: assume needs labeling on error
 
     def _run_explore(self, n: int, iter_dir: str, conf: dict, nep_path: str):
+        """
+        Run GPUMD exploration and submit gamma scanning tasks.
+        Returns traj_map: {cond_id: extrapolation.xyz path}
+        """
         conditions = conf["gpumd"]["conditions"]
         job_script_tmpl = conf["gpumd"]["job_script"].replace("{iter}", str(n))
 
@@ -364,8 +371,13 @@ class LearnEPOrchestrator:
         if not os.path.exists(explore_dir):
             os.makedirs(explore_dir)
 
-        job_map = {}
-        traj_map = {}  # Map cond_id -> traj_path
+        # Build Active Set FIRST (needed for scanning)
+        asi_path = os.path.join(iter_dir, "active_set.asi")
+        if not os.path.exists(asi_path):
+            self.logger.info("Building Active Set for gamma scanning...")
+            self._build_active_set(iter_dir, nep_path, conf)
+
+        job_map = {}  # {jid: (cond_id, c_dir)}
 
         for cond in conditions:
             cond_id = cond["id"]
@@ -384,90 +396,186 @@ class LearnEPOrchestrator:
             )
 
             jid = self.scheduler.submit_job(script, c_dir)
-            job_map[jid] = c_dir
+            job_map[jid] = (cond_id, c_dir)
 
         timeout = conf["gpumd"].get("timeout", 86400)  # Default 24h
-        self.scheduler.wait_jobs(job_map, timeout=timeout)
+        scan_timeout = conf["selection"].get("scan_timeout", 3600)  # Default 1h
 
-        # Collect trajectories
-        for jid, c_dir in job_map.items():
-            # Reverse map c_dir to cond_id? Or just store cond_id in job_map?
-            # Better to loop over conditions again or store logic.
-            # job_map was {jid: c_dir}. Let's just re-iterate conditions effectively.
-            # Actually, let's just loop over conditions again since we know their paths.
-            pass
+        traj_map = {}  # {cond_id: extrapolation.xyz path}
+        scan_job_map = {}  # {scan_jid: (cond_id, c_dir)}
 
-        for cond in conditions:
-            cond_id = cond["id"]
-            c_dir = os.path.join(explore_dir, cond_id)
-            t = self.gpumd_task.get_trajectory_path(c_dir)
-            if t:
-                traj_map[cond_id] = t
+        # Wait for all GPUMD jobs
+        self.scheduler.wait_jobs(
+            {jid: info[1] for jid, info in job_map.items()}, timeout=timeout
+        )
+
+        # Submit scan tasks for each completed GPUMD
+        for jid, (cond_id, c_dir) in job_map.items():
+            traj_path = self.gpumd_task.get_trajectory_path(c_dir)
+            if not traj_path:
+                self.logger.warning(f"[{cond_id}] No trajectory found, skipping scan")
+                continue
+
+            extrap_path = os.path.join(c_dir, "extrapolation.xyz")
+
+            # Skip if extrapolation already exists (avoid re-computation)
+            if os.path.exists(extrap_path):
+                self.logger.info(
+                    f"[{cond_id}] Extrapolation exists, skipping scan: {extrap_path}"
+                )
+                traj_map[cond_id] = extrap_path
+                continue
+
+            # Prepare and submit scan task
+            try:
+                # Remove DONE file left by GPUMD job to avoid interfering with scan job monitoring
+                done_file = os.path.join(c_dir, "DONE")
+                if os.path.exists(done_file):
+                    os.remove(done_file)
+                    self.logger.debug(f"[{cond_id}] Removed old DONE file before scan")
+
+                scan_script = self._prepare_scan_task(
+                    c_dir, traj_path, nep_path, asi_path, conf
+                )
+                scan_jid = self.scheduler.submit_job(scan_script, c_dir)
+                scan_job_map[scan_jid] = (cond_id, c_dir)
+                self.logger.info(f"[{cond_id}] Submitted scan task: {scan_jid}")
+            except Exception as e:
+                self.logger.error(f"[{cond_id}] Failed to submit scan task: {e}")
+                continue
+
+        # Wait for all scan tasks
+        if scan_job_map:
+            self.logger.info(f"Waiting for {len(scan_job_map)} scan tasks...")
+            self.scheduler.wait_jobs(
+                {jid: info[1] for jid, info in scan_job_map.items()},
+                timeout=scan_timeout,
+            )
+
+        # Collect extrapolation results
+        for scan_jid, (cond_id, c_dir) in scan_job_map.items():
+            extrap_path = os.path.join(c_dir, "extrapolation.xyz")
+            if os.path.exists(extrap_path):
+                traj_map[cond_id] = extrap_path
+                self.logger.info(f"[{cond_id}] Scan complete: {extrap_path}")
+            else:
+                self.logger.warning(
+                    f"[{cond_id}] Scan failed: extrapolation.xyz not found"
+                )
 
         return traj_map
+
+    def _prepare_scan_task(
+        self, work_dir: str, traj_path: str, nep_path: str, asi_path: str, conf: dict
+    ) -> str:
+        """
+        Prepare gamma scanning job script with auto-injected Python path and parameters.
+        """
+        sel_conf = conf["selection"]
+        gamma_conf = sel_conf.get("gamma", {})
+
+        # Auto-detect current Python interpreter absolute path
+        python_exe = sys.executable
+
+        # Generate scan command with absolute paths
+        output_path = os.path.join(work_dir, "extrapolation.xyz")
+        min_dist = sel_conf.get("min_dist", None)
+
+        scan_cmd = (
+            f"{python_exe} -m learnep.jaxvol gamma "
+            f"--input {os.path.abspath(traj_path)} "
+            f"--nep-path {os.path.abspath(nep_path)} "
+            f"--asi-path {os.path.abspath(asi_path)} "
+            f"--output {os.path.abspath(output_path)} "
+            f"--threshold {gamma_conf.get('threshold', 1.05)} "
+            f"--threshold-max {gamma_conf.get('threshold_max', 20.0)}"
+        )
+
+        if min_dist is not None:
+            scan_cmd += f" --min-dist {min_dist}"
+
+        # Get job script template from config, auto-inject scan command
+        job_tmpl = sel_conf.get("scan_job_script", self._default_scan_job_script())
+        job_content = job_tmpl.replace("{scan_cmd}", scan_cmd)
+
+        script_path = os.path.join(work_dir, "scan.sh")
+        with open(script_path, "w") as f:
+            f.write(job_content)
+
+        return script_path
+
+    def _default_scan_job_script(self) -> str:
+        """Default job script template for gamma scanning."""
+        return """#!/bin/bash
+#PBS -N gamma_scan
+#PBS -q gpu
+#PBS -l nodes=1:ppn=1:gpus=1
+cd $PBS_O_WORKDIR
+{scan_cmd}
+"""
+
+    def _build_active_set(self, iter_dir: str, nep_path: str, conf: dict):
+        """Build active set from train.xyz for gamma scanning."""
+        from learnep.jaxvol.tools import get_B_projections, get_active_set
+
+        sel_conf = conf["selection"]
+        mode = sel_conf.get("mode", "adaptive")
+        train_xyz = os.path.join(iter_dir, "train.xyz")
+        asi_path = os.path.join(iter_dir, "active_set.asi")
+
+        train_atoms = read(train_xyz, index=":")
+        B_proj, B_idx = get_B_projections(train_atoms, nep_path)
+        get_active_set(B_proj, B_idx, write_asi=True, asi_filename=asi_path, mode=mode)
+        self.logger.info(f"Active Set saved to {asi_path}")
 
     def _run_selection(
         self, n: int, iter_dir: str, conf: dict, traj_map: dict, nep_path: str
     ) -> list:
-        # Lazy import to respect JAX platform config
-        from learnep.jaxvol.tools import (
-            scan_trajectory_gamma,
-            get_B_projections,
-            get_active_set,
-        )
+        """
+        Load pre-computed extrapolation results and perform MaxVol sub-selection.
+        traj_map: {cond_id: extrapolation.xyz path} from _run_explore
+        """
+        from learnep.jaxvol.tools import get_B_projections, get_active_set
 
         sel_conf = conf["selection"]
         mode = sel_conf.get("mode", "adaptive")
-        gamma_conf = sel_conf.get("gamma", {})
 
-        # Use passed nep_path
         nep_txt = nep_path
         train_xyz = os.path.join(iter_dir, "train.xyz")
+        asi_path = os.path.join(iter_dir, "active_set.asi")
 
-        self.logger.info("Building Active Set from current train.xyz...")
-        try:
-            train_atoms = read(train_xyz, index=":")
-            B_proj, B_idx = get_B_projections(train_atoms, nep_txt)
-            asi_path = os.path.join(iter_dir, "active_set.asi")
+        # Active Set should already be built by _run_explore, but check just in case
+        if not os.path.exists(asi_path):
+            self.logger.info("Active Set not found, building...")
+            try:
+                train_atoms = read(train_xyz, index=":")
+                B_proj, B_idx = get_B_projections(train_atoms, nep_txt)
+                get_active_set(
+                    B_proj, B_idx, write_asi=True, asi_filename=asi_path, mode=mode
+                )
+            except Exception as e:
+                self.logger.error(f"Selection Prep Failed: {e}")
+                return []
 
-            get_active_set(
-                B_proj, B_idx, write_asi=True, asi_filename=asi_path, mode=mode
-            )
-        except Exception as e:
-            self.logger.error(f"Selection Prep Failed: {e}")
-            return []
-
-        # Scan Trajectories
+        # Load pre-computed extrapolation results
         candidates = []
         temp_counts = defaultdict(int)
 
         # Helper to find config for cond_id
         cond_config_map = {c["id"]: c for c in conf["gpumd"]["conditions"]}
 
-        for cond_id, t_file in traj_map.items():
+        for cond_id, extrap_file in traj_map.items():
             try:
-                traj = read(t_file, index=":")
-
-                # MaxVol: Extrapolation Grade (>= 1.0)
-                # QR: Relative Residual (0.0 - 1.0)
-                selected = scan_trajectory_gamma(
-                    traj,
-                    nep_file=nep_txt,
-                    asi_file=asi_path,
-                    gamma_min=gamma_conf.get("threshold", 1.05),
-                    gamma_max=gamma_conf.get("threshold_max", 20.0),
-                    min_dist=sel_conf.get("min_dist", None),
+                # Directly load pre-computed extrapolation results
+                selected = read(extrap_file, index=":")
+                self.logger.info(
+                    f"[{cond_id}] Loaded {len(selected)} candidates from {extrap_file}"
                 )
                 candidates.extend(selected)
 
                 # Track Temperature Source
                 c_conf = cond_config_map.get(cond_id, {})
                 run_in_txt = c_conf.get("run_in", "")
-                # Try to parse "ensemble nvt_ber T ..."
-                # Regex for "ensemble ... T ..."
-                # Pattern: ensemble (nvt_ber|npt_ber) T_start T_end T_damp ...
-                # We usually care about T or T_end. Let's just grab the first number involved.
-                # Example: "ensemble nvt_ber 300 1000 100" -> 300
                 temp_match = re.search(r"ensemble\s+\w+\s+(\d+)", run_in_txt)
                 temp = "Unknown"
                 if temp_match:
@@ -476,7 +584,7 @@ class LearnEPOrchestrator:
                 temp_counts[temp] += len(selected)
 
             except Exception as e:
-                self.logger.error(f"Scanning {t_file} failed: {e}")
+                self.logger.error(f"Loading {extrap_file} failed: {e}")
 
         # Log Selection Statistics by Temperature
         if temp_counts:
@@ -570,7 +678,14 @@ class LearnEPOrchestrator:
 
         return final_candidates
 
-    def _run_label(self, n: int, iter_dir: str, conf: dict, candidates: list, label_subdir: str = "labeling"):
+    def _run_label(
+        self,
+        n: int,
+        iter_dir: str,
+        conf: dict,
+        candidates: list,
+        label_subdir: str = "labeling",
+    ):
         label_dir = os.path.join(iter_dir, label_subdir)
         vasp_conf = conf["vasp"]
 
